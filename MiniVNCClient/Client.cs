@@ -31,7 +31,7 @@ namespace MiniVNCClient
 		public Version ClientVersion => _ClientVersion;
 		#endregion
 
-		#region Construtores
+		#region Constructors
 		static Client()
 		{
 			_SecurityTypes = Enumerable.Range(0, 256)
