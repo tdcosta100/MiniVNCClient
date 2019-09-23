@@ -1,0 +1,31 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29306.81
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient", "MiniVNCClient\MiniVNCClient.csproj", "{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient.Console", "MiniVNCClient.Console\MiniVNCClient.Console.csproj", "{0C94F8BC-D507-47D6-94E6-510358BCAF2E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {A31C7CFB-62D4-493C-8610-5D70ECF212BF}
+	EndGlobalSection
+EndGlobal
