@@ -52,6 +52,7 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Types\ClientInit.cs" />
     <Compile Include="Types\ClientToServerMessageType.cs" />
+    <Compile Include="Types\HextileSubencodingMask.cs" />
     <Compile Include="Types\RangeCollection.cs" />
     <Compile Include="Types\ServerToClientMessageType.cs" />
     <Compile Include="Types\VNCEncoding.cs" />

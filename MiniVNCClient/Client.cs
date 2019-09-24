@@ -27,7 +27,7 @@ namespace MiniVNCClient
 		private static readonly SecurityType[] _SupportedSecurityTypes = new[] { SecurityType.Invalid, SecurityType.None };
 
 		private static readonly RangeCollection<int, VNCEncoding?> _Encodings;
-		private static readonly VNCEncoding[] _SupportedEncodings = new[] { /* VNCEncoding.Raw, */ VNCEncoding.Cursor, VNCEncoding.CopyRect, VNCEncoding.LastRect, VNCEncoding.Zlib };
+		private static readonly VNCEncoding[] _SupportedEncodings = new[] { /* VNCEncoding.Raw, */ VNCEncoding.Cursor, VNCEncoding.CopyRect, VNCEncoding.LastRect, /* VNCEncoding.Zlib, */ VNCEncoding.Hextile };
 
 		private static readonly RangeCollection<int, ClientToServerMessageType?> _ClientToServerMessageTypes;
 		private static readonly ClientToServerMessageType[] _SupportedClientToServerMessageTypes = new[] { ClientToServerMessageType.SetEncodings, ClientToServerMessageType.FramebufferUpdateRequest, ClientToServerMessageType.EnableContinuousUpdates };
@@ -336,6 +336,7 @@ namespace MiniVNCClient
 			SessionInfo = ServerInit.Deserialize(_Stream);
 
 			_FrameBufferState = new MagickImage(MagickColors.Black, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
+			_FrameBufferState.Format = MagickFormat.Mpc;
 
 			SetEncodings(_SupportedEncodings);
 
@@ -351,7 +352,9 @@ namespace MiniVNCClient
 				{
 					var ultimaAtualizacao = DateTime.Now;
 					FramebufferUpdateRequest(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-					Task.Delay(TimeSpan.FromSeconds(Math.Max(0.25 - (DateTime.Now - ultimaAtualizacao).TotalSeconds, 0))).Wait();
+					Task.Delay(TimeSpan.FromSeconds(Math.Max(0.1 - (DateTime.Now - ultimaAtualizacao).TotalSeconds, 0))).Wait();
+
+					break;
 				}
 			});
 
@@ -425,6 +428,8 @@ namespace MiniVNCClient
 		{
 			try
 			{
+				var stopwatch = Stopwatch.StartNew();
+
 				var padding = _Reader.ReadByte();
 
 				var numberOfRectangles = BinaryConverter.ReadUInt16(_Reader);
@@ -433,7 +438,8 @@ namespace MiniVNCClient
 
 				if (numberOfRectangles > 0)
 				{
-					var newFrameBufferState = new MagickImage(_FrameBufferState);
+					//var newFrameBufferState = new MagickImage(_FrameBufferState);
+					var newFrameBufferState = _FrameBufferState;
 
 					MagickImage cursor = null;
 					System.Windows.Point cursorPoint = new System.Windows.Point();
@@ -479,12 +485,6 @@ namespace MiniVNCClient
 							
 						}
 
-						if (encodingType == VNCEncoding.CompressionLevel)
-						{
-							var compressionLevel = (int)encodingType;
-							Trace.TraceInformation($"Compression Level: {Math.Abs(246 + compressionLevel)}");
-						}
-
 						if (encodingType == VNCEncoding.Zlib)
 						{
 							if (_MemoryStreamCompressed == null)
@@ -513,6 +513,99 @@ namespace MiniVNCClient
 							newFrameBufferState.Composite(rectangleData, x, y);
 						}
 
+						if (encodingType == VNCEncoding.Hextile)
+						{
+							MagickColor background = null;
+							MagickColor foreground = null;
+
+							for (int textileY = 0; textileY < height; textileY += 16)
+							{
+								var textileHeight = Math.Min(height - textileY, 16);
+
+								for (int textileX = 0; textileX < width; textileX += 16)
+								{
+									var textileWidth = Math.Min(width - textileX, 16);
+
+									var subencodingMask = (HextileSubencodingMask)_Reader.ReadByte();
+
+									Trace.TraceInformation($"Drawing textile {{{textileX}, {textileY}, {textileWidth}, {textileHeight}}}, subencoding mask: {subencodingMask}");
+
+									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw))
+									{
+										var data = _Reader.ReadBytes(textileWidth * textileHeight * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
+
+										var rectangleData = new MagickImage(data, new PixelReadSettings(textileWidth, textileHeight, StorageType.Char, "BGRA"));
+
+										newFrameBufferState.Composite(rectangleData, x + textileX, y + textileY);
+									}
+									else
+									{
+										var rectangleData = new MagickImage(MagickColors.Transparent, textileWidth, textileHeight);
+
+										if (subencodingMask.HasFlag(HextileSubencodingMask.BackgroundSpecified))
+										{
+											background =
+												new MagickColor(
+													red: _Reader.ReadByte(),
+													green: _Reader.ReadByte(),
+													blue: _Reader.ReadByte(),
+													alpha: _Reader.ReadByte()
+												);
+
+											rectangleData.Draw(new DrawableFillColor(background), new DrawableRectangle(new System.Drawing.Rectangle(textileX, textileY, textileWidth, textileHeight)));
+										}
+
+										if (subencodingMask.HasFlag(HextileSubencodingMask.ForegroundSpecified))
+										{
+											foreground =
+												new MagickColor(
+													red: _Reader.ReadByte(),
+													green: _Reader.ReadByte(),
+													blue: _Reader.ReadByte(),
+													alpha: _Reader.ReadByte()
+												);
+										}
+
+										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
+										{
+											var numberOfSubrectangles = _Reader.ReadByte();
+
+											Trace.TraceInformation($"Number of subrectangles: {numberOfRectangles}");
+
+											for (int j = 0; j < numberOfSubrectangles; j++)
+											{
+												var subrectangleColor = foreground;
+
+												if (subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
+												{
+													subrectangleColor =
+														new MagickColor(
+															red: _Reader.ReadByte(),
+															green: _Reader.ReadByte(),
+															blue: _Reader.ReadByte(),
+															alpha: _Reader.ReadByte()
+														);
+												}
+
+												var subrectangleXY = _Reader.ReadByte();
+												var subrectangleWidthHeight = _Reader.ReadByte();
+
+												var subrectangleX = (subrectangleXY & 0xf0) >> 4;
+												var subrectangleY = subrectangleXY & 0x0f;
+
+												var subrectangleWidth = ((subrectangleWidthHeight & 0xf0) >> 4) + 1;
+												var subrectangleHeight = (subrectangleWidthHeight & 0x0f) + 1;
+
+												rectangleData.Draw(new DrawableFillColor(subrectangleColor), new DrawableRectangle(new System.Drawing.Rectangle(subrectangleX, subrectangleY, subrectangleWidth, subrectangleHeight)));
+											}
+										}
+
+										newFrameBufferState.Composite(rectangleData, x + textileX, y + textileY);
+									}
+								}
+							}
+						}
+
 						if (encodingType == VNCEncoding.Raw)
 						{
 							var data = _Reader.ReadBytes(width * height * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
@@ -534,20 +627,22 @@ namespace MiniVNCClient
 						newFrameBufferState.Composite(cursor, (int)cursorPoint.X, (int)cursorPoint.Y, CompositeOperator.Atop);
 					}
 
-					newFrameBufferState.Alpha(AlphaOption.Off);
-					newFrameBufferState.Alpha(AlphaOption.Remove);
-					newFrameBufferState.Format = MagickFormat.Png24;
+					//newFrameBufferState.Alpha(AlphaOption.Off);
+					//newFrameBufferState.Alpha(AlphaOption.Remove);
+					//newFrameBufferState.Format = MagickFormat.Bmp;
 
-					using (var arquivo = File.Open($@"Imagens\{DateTime.Now:HH_mm_ss}.png", FileMode.Create, FileAccess.Write, FileShare.Read))
+					using (var arquivo = File.Open($@"Imagens\{DateTime.Now:HH_mm_ss.fff}.bmp", FileMode.Create, FileAccess.Write, FileShare.Read))
 					{
 						newFrameBufferState.Write(arquivo);
 					}
 
-					_FrameBufferState.Dispose();
-					_FrameBufferState = newFrameBufferState;
+					//_FrameBufferState.Dispose();
+					//_FrameBufferState = newFrameBufferState;
 
-					Trace.TraceInformation("Finished updating framebuffer");
+					Trace.TraceInformation($"Finished updating framebuffer after {stopwatch.Elapsed.TotalSeconds} seconds");
 				}
+
+				stopwatch.Stop();
 			}
 			catch (Exception ex)
 			{
