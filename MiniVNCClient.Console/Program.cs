@@ -12,7 +12,7 @@ namespace MiniVNCClient.Console
 		{
 			var client = new Client();
 
-			client.Connect("192.168.56.103", 5900);
+			client.Connect("192.168.56.102", 5900);
 		}
 	}
 }
