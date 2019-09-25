@@ -8,6 +8,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -27,20 +28,23 @@ namespace MiniVNCClient
 			new[]
 			{
 				SecurityType.Invalid,
-				SecurityType.None
+				SecurityType.None,
+				SecurityType.VNCAuthentication,
+				SecurityType.Tight
 			};
 
 		private static readonly RangeCollection<int, VNCEncoding?> _Encodings;
 		private static readonly VNCEncoding[] _SupportedEncodings =
 			new[]
 			{
-				/* VNCEncoding.Raw, */
+				VNCEncoding.Tight,
+				VNCEncoding.ZlibHex,
+				VNCEncoding.Hextile,
+				VNCEncoding.Zlib,
+				VNCEncoding.Raw,
 				VNCEncoding.Cursor,
 				VNCEncoding.CopyRect,
-				VNCEncoding.LastRect,
-				/* VNCEncoding.Zlib, */
-				/* VNCEncoding.Hextile */
-				VNCEncoding.ZlibHex
+				VNCEncoding.LastRect
 			};
 
 		private static readonly RangeCollection<int, ClientToServerMessageType?> _ClientToServerMessageTypes;
@@ -381,11 +385,99 @@ namespace MiniVNCClient
 					}
 				}
 			}
+			else if (securityTypes.Contains(SecurityType.Tight))
+			{
+				_Writer.Write((byte)SecurityType.Tight);
+
+				var numberOfTunnels = (int)_Reader.ReadUInt32();
+
+				if (numberOfTunnels > 0)
+				{
+					var tunnels = Enumerable.Range(0, numberOfTunnels)
+						.Select(i => TightCapability.Deserialize(_Stream))
+						.GroupBy(t => t.Vendor)
+						.ToDictionary(
+							g => g.Key,
+							g => g.ToDictionary(t => t.Signature, t => t)
+						);
+
+					if (tunnels.ContainsKey("TGHT") && tunnels["TGHT"].ContainsKey("NOTUNNEL"))
+					{
+						_Writer.Write(tunnels["TGHT"]["NOTUNNEL"].Code);
+					}
+				}
+
+				var numberOfAuthenticationTypes = (int)_Reader.ReadUInt32();
+
+				if (numberOfAuthenticationTypes > 0)
+				{
+					var authenticationTypes = Enumerable.Range(0, numberOfAuthenticationTypes).Select(i => TightCapability.Deserialize(_Stream))
+						.GroupBy(a => a.Vendor)
+						.ToDictionary(
+							g => g.Key,
+							g => g.ToDictionary(a => a.Signature, a => a)
+						);
+
+					if (authenticationTypes.ContainsKey("TGHT") && authenticationTypes["TGHT"].ContainsKey("NOAUTH__"))
+					{
+						_Writer.Write(authenticationTypes["TGHT"]["NOAUTH__"].Code);
+					}
+					else if (authenticationTypes.ContainsKey("TGHT") && authenticationTypes["TGHT"].ContainsKey("VNCAUTH_"))
+					{
+						_Writer.Write(authenticationTypes["TGHT"]["VNCAUTH_"].Code);
+					}
+				}
+			}
 			else if (securityTypes.Contains(SecurityType.VNCAuthentication))
 			{
+				_Writer.Write((byte)SecurityType.VNCAuthentication);
+
 				var challenge = _Reader.ReadBytes(16);
 
-				throw new NotImplementedException("TODO: VNC Authentication");
+				var password = "testvnc";
+
+				var key = password.Substring(0, Math.Min(password.Length, 8))
+					.ToArray()
+					.Concat(new char[8 - password.Length])
+					.Select(
+						item =>
+						{
+							return
+								(byte)
+								(
+									((item >> 7) & 0x01)
+									| (((item >> 6) & 0x01) << 1)
+									| (((item >> 5) & 0x01) << 2)
+									| (((item >> 4) & 0x01) << 3)
+									| (((item >> 3) & 0x01) << 4)
+									| (((item >> 2) & 0x01) << 5)
+									| (((item >> 1) & 0x01) << 6)
+									| (((item >> 0) & 0x01) << 7)
+								);
+						}
+					)
+					.ToArray();
+
+				using (var dESCryptoServiceProvider = new DESCryptoServiceProvider() { Key = key, Mode = CipherMode.ECB })
+				using (var encryptor = dESCryptoServiceProvider.CreateEncryptor())
+				{
+					var response = new byte[16];
+
+					encryptor.TransformBlock(challenge, 0, 16, response, 0);
+
+					_Writer.Write(response);
+				}
+
+				var securityResult = (SecurityResult)_Reader.ReadUInt32();
+
+				if (securityResult == SecurityResult.Failed)
+				{
+					throw new Exception($"Connection failed: incorrect password");
+				}
+				else if (securityResult == SecurityResult.FailedTooManyAttempts)
+				{
+					throw new Exception($"Connection failed: too many attempts");
+				}
 			}
 		}
 
@@ -453,6 +545,7 @@ namespace MiniVNCClient
 				case ServerToClientMessageType.UltraVNC:
 					break;
 				case ServerToClientMessageType.FileTransfer:
+					FileTransferHandler();
 					break;
 				case ServerToClientMessageType.TextChat:
 					break;
@@ -721,13 +814,95 @@ namespace MiniVNCClient
 		{
 			var padding = _Reader.ReadBytes(3);
 
-			var text = _Reader.ReadString((int)_Reader.ReadUInt32());
-			Trace.TraceInformation($"Server cut text: \"{text}\"");
+			var length = (int)_Reader.ReadUInt32();
+
+			if (length > 0)
+			{
+				var text = _Reader.ReadString();
+				Trace.TraceInformation($"Server cut text: \"{text}\"");
+			}
 		}
 
 		public void BellHandler()
 		{
 			System.Media.SystemSounds.Beep.Play();
+		}
+
+		public void FileTransferHandler()
+		{
+			var reader = _Reader;
+
+			int contentType = reader.ReadByte();
+			int contentParamT = reader.ReadByte();
+			int contentParam = contentParamT;
+			contentParamT = reader.ReadByte();
+			contentParamT = contentParamT << 8;
+			contentParam = contentParam | contentParamT;
+
+			if (contentType == FileTransferContentType.RDrivesList || contentType == FileTransferContentType.DirPacket)
+			{
+				if (contentParam == FileTransferContentType.ADrivesList || contentParam == FileTransferContentType.ADirectory)
+				{
+					var ignore = reader.ReadBytes(4);
+
+					var length = reader.ReadInt32();
+
+					if (length > 0)
+					{
+						var names = Encoding.UTF8.GetString(reader.ReadBytes(length));
+					}
+
+					ignore = null;
+				}
+				else if (contentParam == 0)
+				{
+
+				}
+			}
+			else if (contentType == FileTransferContentType.FileHeader)
+			{
+				long size = reader.ReadInt32();
+				int length = reader.ReadInt32();
+
+				var name = Encoding.UTF8.GetString(reader.ReadBytes(length));
+
+				long sizeH = reader.ReadInt32();
+
+				size += sizeH << 32;
+			}
+			else if (contentType == FileTransferContentType.FilePacket)
+			{
+				var size = reader.ReadInt32();
+
+				bool compressed = size != 0;
+
+				var length = reader.ReadInt32();
+
+				var data = reader.ReadBytes(length);
+			}
+			else if (contentType == FileTransferContentType.EndOfFile || contentType == FileTransferContentType.AbortFileTransfer)
+			{
+				var size = reader.ReadInt32();
+				var length = reader.ReadInt32();
+			}
+			else if (contentType == FileTransferContentType.CommandReturn || contentParam == FileTransferContentType.FileAcceptHeader)
+			{
+				var size = reader.ReadInt32();
+				var length = reader.ReadInt32();
+				var name = Encoding.UTF8.GetString(reader.ReadBytes(length));
+			}
+			else if (contentType == FileTransferContentType.FileChecksums)
+			{
+				var size = reader.ReadInt32();
+				var length = reader.ReadInt32();
+				var data = reader.ReadBytes(length);
+			}
+			else
+			{
+				var size = reader.ReadInt32();
+				var length = reader.ReadInt32();
+				var teste = reader.ReadBytes(64);
+			}
 		}
 		#endregion
 
@@ -736,6 +911,8 @@ namespace MiniVNCClient
 		{
 			var tcpClient = new TcpClient();
 			tcpClient.Connect(hostname, port);
+
+			tcpClient.NoDelay = true;
 
 			Initialize(tcpClient.GetStream());
 		}
@@ -799,6 +976,11 @@ namespace MiniVNCClient
 					.Concat(new byte[3])
 					.ToArray()
 			);
+
+			if (_SupportedEncodings)
+			{
+
+			}
 		}
 
 		public void FramebufferUpdateRequest(bool incremental, ushort x, ushort y, ushort width, ushort height)
