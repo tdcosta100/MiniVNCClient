@@ -34,6 +34,7 @@
     <Reference Include="Magick.NET-Q8-AnyCPU, Version=7.14.4.0, Culture=neutral, PublicKeyToken=2004825badfa91ec, processorArchitecture=MSIL">
       <HintPath>..\packages\Magick.NET-Q8-AnyCPU.7.14.4\lib\net40\Magick.NET-Q8-AnyCPU.dll</HintPath>
     </Reference>
+    <Reference Include="PresentationCore" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
@@ -61,6 +62,9 @@
     <Compile Include="Types\SecurityType.cs" />
     <Compile Include="Types\ServerInit.cs" />
     <Compile Include="Util\BinaryConverter.cs" />
+    <Compile Include="Util\BinaryReader.cs" />
+    <Compile Include="Util\NativeWrappers\Kernel32.cs" />
+    <Compile Include="Util\Serializer.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

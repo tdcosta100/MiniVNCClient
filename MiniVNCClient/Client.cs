@@ -1,5 +1,4 @@
-﻿using ImageMagick;
-using MiniVNCClient.Events;
+﻿using MiniVNCClient.Events;
 using MiniVNCClient.Types;
 using MiniVNCClient.Util;
 using System;
@@ -9,10 +8,12 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace MiniVNCClient
 {
@@ -27,7 +28,14 @@ namespace MiniVNCClient
 		private static readonly SecurityType[] _SupportedSecurityTypes = new[] { SecurityType.Invalid, SecurityType.None };
 
 		private static readonly RangeCollection<int, VNCEncoding?> _Encodings;
-		private static readonly VNCEncoding[] _SupportedEncodings = new[] { /* VNCEncoding.Raw, */ VNCEncoding.Cursor, VNCEncoding.CopyRect, VNCEncoding.LastRect, /* VNCEncoding.Zlib, */ VNCEncoding.Hextile };
+		private static readonly VNCEncoding[] _SupportedEncodings = new[] {
+			/* VNCEncoding.Raw, */
+			VNCEncoding.Cursor,
+			VNCEncoding.CopyRect,
+			VNCEncoding.LastRect,
+			/* VNCEncoding.Zlib, */
+			VNCEncoding.Hextile
+		};
 
 		private static readonly RangeCollection<int, ClientToServerMessageType?> _ClientToServerMessageTypes;
 		private static readonly ClientToServerMessageType[] _SupportedClientToServerMessageTypes = new[] { ClientToServerMessageType.SetEncodings, ClientToServerMessageType.FramebufferUpdateRequest, ClientToServerMessageType.EnableContinuousUpdates };
@@ -36,15 +44,20 @@ namespace MiniVNCClient
 		private static readonly ServerToClientMessageType[] _SupportedServerToClientMessageTypes = new[] { ServerToClientMessageType.FramebufferUpdate, ServerToClientMessageType.EndOfContinuousUpdates };
 
 		private Stream _Stream;
-		private BinaryReader _Reader;
+		private Util.BinaryReader _Reader;
 		private BinaryWriter _Writer;
 
-		private MagickImage _FrameBufferState;
+		private byte[] _FrameBufferState;
+		private int _FrameBufferStateStride;
+		private byte[] _FrameBufferCursor;
+		private byte[] _FrameBufferCursorBitMask;
+		private Point _FrameBufferCursorTipPosition;
+		private Point _FrameBufferCursorLocation;
 
 		private MemoryStream _MemoryStreamCompressed = null;
 		private BinaryWriter _MemoryStreamCompressedWriter = null;
 		private DeflateStream _DeflateStream = null;
-		private BinaryReader _DeflateStreamReader = null;
+		private Util.BinaryReader _DeflateStreamReader = null;
 		#endregion
 
 		#region Events
@@ -240,10 +253,40 @@ namespace MiniVNCClient
 		#endregion
 
 		#region Private methods
+		private byte[] FillRectangle(int width, int height, byte[] data)
+		{
+			var rectangleData = new byte[width * height * data.Length];
+
+			Buffer.BlockCopy(data, 0, rectangleData, 0, data.Length);
+
+			for (int iteration = 1; (iteration * data.Length) < rectangleData.Length; iteration *= 2)
+			{
+				Buffer.BlockCopy(rectangleData, 0, rectangleData, iteration * data.Length, Math.Min(iteration * data.Length, rectangleData.Length - iteration * data.Length));
+			}
+
+			return rectangleData;
+		}
+
+		private void WriteRectangle(byte[] buffer, int bufferStride, Int32Rect rectangle, byte[] rectangleData)
+		{
+			var rectangleStride = rectangle.Width * SessionInfo.PixelFormat.BytesPerPixel;
+			var rectangleLineOffset = rectangle.X * SessionInfo.PixelFormat.BytesPerPixel;
+
+			for (int rectangleLine = 0; rectangleLine < rectangle.Height; rectangleLine++)
+			{
+				Buffer.BlockCopy(
+					src: rectangleData,
+					srcOffset: rectangleLine * rectangleStride,
+					dst: buffer,
+					dstOffset: bufferStride * (rectangle.Y + rectangleLine) + rectangleLineOffset,
+					count: rectangleStride);
+			}
+		}
+
 		private void Initialize(Stream stream)
 		{
 			_Stream = stream;
-			_Reader = new BinaryReader(_Stream);
+			_Reader = new Util.BinaryReader(_Stream);
 			_Writer = new BinaryWriter(_Stream);
 
 			NegotiateVersion();
@@ -335,14 +378,14 @@ namespace MiniVNCClient
 
 			SessionInfo = ServerInit.Deserialize(_Stream);
 
-			_FrameBufferState = new MagickImage(MagickColors.Black, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-			_FrameBufferState.Format = MagickFormat.Mpc;
+			_FrameBufferStateStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
+			_FrameBufferState = new byte[SessionInfo.FrameBufferHeight * _FrameBufferStateStride];
 
 			SetEncodings(_SupportedEncodings);
 
-			SetPixelFormat(SessionInfo.PixelFormat);
+			//SetPixelFormat(SessionInfo.PixelFormat);
 
-			FramebufferUpdateRequest(false, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
+			//FramebufferUpdateRequest(false, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
 
 			//EnableContinuousUpdates(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
 
@@ -353,11 +396,8 @@ namespace MiniVNCClient
 					var ultimaAtualizacao = DateTime.Now;
 					FramebufferUpdateRequest(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
 					Task.Delay(TimeSpan.FromSeconds(Math.Max(0.1 - (DateTime.Now - ultimaAtualizacao).TotalSeconds, 0))).Wait();
-
-					break;
 				}
 			});
-
 
 			Task.Run(
 				() =>
@@ -426,58 +466,42 @@ namespace MiniVNCClient
 
 		private void FramebufferUpdateHandler()
 		{
+			/*
 			try
 			{
-				var stopwatch = Stopwatch.StartNew();
+			*/
+				var updateStartTime = DateTime.Now;
 
 				var padding = _Reader.ReadByte();
 
-				var numberOfRectangles = BinaryConverter.ReadUInt16(_Reader);
+				var numberOfRectangles = _Reader.ReadInt16();
 
 				Trace.TraceInformation($"Total rectangles: {numberOfRectangles}");
 
 				if (numberOfRectangles > 0)
 				{
-					//var newFrameBufferState = new MagickImage(_FrameBufferState);
-					var newFrameBufferState = _FrameBufferState;
+					var newFrameBufferState = new byte[_FrameBufferState.Length];
+					Buffer.BlockCopy(_FrameBufferState, 0, newFrameBufferState, 0, _FrameBufferState.Length);
 
-					MagickImage cursor = null;
-					System.Windows.Point cursorPoint = new System.Windows.Point();
-
-					for (int i = 0; i < numberOfRectangles; i++)
+					for (int rectangleIndex = 0; rectangleIndex < numberOfRectangles; rectangleIndex++)
 					{
-						var x = BinaryConverter.ReadUInt16(_Reader);
-						var y = BinaryConverter.ReadUInt16(_Reader);
-						var width = BinaryConverter.ReadUInt16(_Reader);
-						var height = BinaryConverter.ReadUInt16(_Reader);
+						var rectangle = new Int32Rect()
+						{
+							X = _Reader.ReadUInt16(),
+							Y = _Reader.ReadUInt16(),
+							Width = _Reader.ReadUInt16(),
+							Height = _Reader.ReadUInt16()
+						};
 
-						var encodingType = (VNCEncoding)BinaryConverter.ReadInt32(_Reader);
+						var encodingType = (VNCEncoding)_Reader.ReadInt32();
 
-						Trace.TraceInformation($"Rectangle {i}: {{{x}, {y}, {width}, {height}}}, EncodingType = {encodingType} ({encodingType:X})");
+						Trace.TraceInformation($"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
 
 						if (encodingType == VNCEncoding.Cursor)
 						{
-							var data = _Reader.ReadBytes(width * height * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
-							var bitmask = _Reader.ReadBytes(((width + 7) / 8) * height);
-
-							cursor = new MagickImage(data, new PixelReadSettings(width, height, StorageType.Char, "BGRA"));
-							var rectangleBitMask = new MagickImage(bitmask, new MagickReadSettings() { Format = MagickFormat.Mono, Width = width, Height = height });
-							rectangleBitMask.Depth = 1;
-
-							cursorPoint = new System.Windows.Point(x, y);
-
-							//rectangleData.Composite(rectangleBitMask, CompositeOperator.ChangeMask);
-
-							/*
-							using (var arquivo = File.Open($@"Imagens\{DateTime.Now:HH_mm_ss}_cursor.png", FileMode.Create, FileAccess.Write, FileShare.Read))
-							{
-								cursor.Format = MagickFormat.Png32;
-
-								cursor.Write(arquivo);
-							}
-							*/
-
-							//newFrameBufferState.Composite(rectangleData, x, y, CompositeOperator.Blend);
+							_FrameBufferCursor = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+							_FrameBufferCursorBitMask = _Reader.ReadBytes(((rectangle.Width + 7) / 8) * rectangle.Height);
+							_FrameBufferCursorTipPosition = new Point(rectangle.X, rectangle.Y);
 						}
 
 						if (encodingType == VNCEncoding.CopyRect)
@@ -485,135 +509,122 @@ namespace MiniVNCClient
 							
 						}
 
-						if (encodingType == VNCEncoding.Zlib)
-						{
-							if (_MemoryStreamCompressed == null)
-							{
-								_MemoryStreamCompressed = new MemoryStream();
-								_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
-							}
-
-							var compressedDataLength = (int)BinaryConverter.ReadUInt32(_Reader);
-							_MemoryStreamCompressed.Position = 0;
-							_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
-							_MemoryStreamCompressed.SetLength(compressedDataLength);
-							_MemoryStreamCompressed.Position = 0;
-
-							if (_DeflateStream == null)
-							{
-								_MemoryStreamCompressed.Position = 2;
-								_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress, false);
-								_DeflateStreamReader = new BinaryReader(_DeflateStream);
-							}
-
-							var data = _DeflateStreamReader.ReadBytes(width * height * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
-
-							var rectangleData = new MagickImage(data, new PixelReadSettings(width, height, StorageType.Char, "BGRA"));
-
-							newFrameBufferState.Composite(rectangleData, x, y);
-						}
-
 						if (encodingType == VNCEncoding.Hextile)
 						{
-							MagickColor background = null;
-							MagickColor foreground = null;
+							byte[] foregroundColor = null;
+							byte[] backgroundColor = null;
 
-							for (int textileY = 0; textileY < height; textileY += 16)
+							for (int hextileY = 0; hextileY < rectangle.Height; hextileY += 16)
 							{
-								var textileHeight = Math.Min(height - textileY, 16);
-
-								for (int textileX = 0; textileX < width; textileX += 16)
+								for (int hextileX = 0; hextileX < rectangle.Width; hextileX += 16)
 								{
-									var textileWidth = Math.Min(width - textileX, 16);
+									var hextile = new Int32Rect(
+										x: hextileX + rectangle.X,
+										y: hextileY + rectangle.Y,
+										width: Math.Min(rectangle.Width - hextileX, 16),
+										height: Math.Min(rectangle.Height - hextileY, 16)
+									);
 
 									var subencodingMask = (HextileSubencodingMask)_Reader.ReadByte();
 
-									Trace.TraceInformation($"Drawing textile {{{textileX}, {textileY}, {textileWidth}, {textileHeight}}}, subencoding mask: {subencodingMask}");
+									//Trace.TraceInformation($"Drawing hextile {{{hextile}}}, subencoding mask: {subencodingMask}");
 
 									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw))
 									{
-										var data = _Reader.ReadBytes(textileWidth * textileHeight * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
+										var textileData = _Reader.ReadBytes(hextile.Width * hextile.Height * SessionInfo.PixelFormat.BytesPerPixel);
 
-										var rectangleData = new MagickImage(data, new PixelReadSettings(textileWidth, textileHeight, StorageType.Char, "BGRA"));
-
-										newFrameBufferState.Composite(rectangleData, x + textileX, y + textileY);
+										WriteRectangle(newFrameBufferState, _FrameBufferStateStride, hextile, textileData);
 									}
 									else
 									{
-										var rectangleData = new MagickImage(MagickColors.Transparent, textileWidth, textileHeight);
+										byte[] textileData = null;
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.BackgroundSpecified))
 										{
-											background =
-												new MagickColor(
-													red: _Reader.ReadByte(),
-													green: _Reader.ReadByte(),
-													blue: _Reader.ReadByte(),
-													alpha: _Reader.ReadByte()
-												);
-
-											rectangleData.Draw(new DrawableFillColor(background), new DrawableRectangle(new System.Drawing.Rectangle(textileX, textileY, textileWidth, textileHeight)));
+											backgroundColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
 										}
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ForegroundSpecified))
 										{
-											foreground =
-												new MagickColor(
-													red: _Reader.ReadByte(),
-													green: _Reader.ReadByte(),
-													blue: _Reader.ReadByte(),
-													alpha: _Reader.ReadByte()
-												);
+											foregroundColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
 										}
+
+										textileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
+
+										WriteRectangle(newFrameBufferState, _FrameBufferStateStride, hextile, textileData);
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
 										{
 											var numberOfSubrectangles = _Reader.ReadByte();
 
-											Trace.TraceInformation($"Number of subrectangles: {numberOfRectangles}");
+											//Trace.TraceInformation($"Number of subrectangles: {numberOfRectangles}");
 
-											for (int j = 0; j < numberOfSubrectangles; j++)
+											for (int subrectangleIndex = 0; subrectangleIndex < numberOfSubrectangles; subrectangleIndex++)
 											{
-												var subrectangleColor = foreground;
+												byte[] subrectangleColor = null;
 
 												if (subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
 												{
-													subrectangleColor =
-														new MagickColor(
-															red: _Reader.ReadByte(),
-															green: _Reader.ReadByte(),
-															blue: _Reader.ReadByte(),
-															alpha: _Reader.ReadByte()
-														);
+													subrectangleColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+												}
+												else
+												{
+													subrectangleColor = foregroundColor;
 												}
 
 												var subrectangleXY = _Reader.ReadByte();
 												var subrectangleWidthHeight = _Reader.ReadByte();
 
-												var subrectangleX = (subrectangleXY & 0xf0) >> 4;
-												var subrectangleY = subrectangleXY & 0x0f;
+												var subrectangle = new Int32Rect(
+													x: ((subrectangleXY & 0xf0) >> 4) + hextile.X,
+													y: (subrectangleXY & 0x0f) + hextile.Y,
+													width: ((subrectangleWidthHeight & 0xf0) >> 4) + 1,
+													height: (subrectangleWidthHeight & 0x0f) + 1
+												);
 
-												var subrectangleWidth = ((subrectangleWidthHeight & 0xf0) >> 4) + 1;
-												var subrectangleHeight = (subrectangleWidthHeight & 0x0f) + 1;
+												var subrectangleData = FillRectangle(subrectangle.Width, subrectangle.Height, subrectangleColor);
 
-												rectangleData.Draw(new DrawableFillColor(subrectangleColor), new DrawableRectangle(new System.Drawing.Rectangle(subrectangleX, subrectangleY, subrectangleWidth, subrectangleHeight)));
+												WriteRectangle(newFrameBufferState, _FrameBufferStateStride, subrectangle, subrectangleData);
 											}
 										}
-
-										newFrameBufferState.Composite(rectangleData, x + textileX, y + textileY);
 									}
 								}
 							}
 						}
 
-						if (encodingType == VNCEncoding.Raw)
+						if (encodingType == VNCEncoding.Raw || encodingType == VNCEncoding.Zlib)
 						{
-							var data = _Reader.ReadBytes(width * height * ((SessionInfo.PixelFormat.BitsPerPixel + 7) / 8));
+							byte[] rectangleData = null;
 
-							var rectangleData = new MagickImage(data, new PixelReadSettings(width, height, StorageType.Char, "BGRA"));
+							if (encodingType == VNCEncoding.Zlib)
+							{
+								if (_MemoryStreamCompressed == null)
+								{
+									_MemoryStreamCompressed = new MemoryStream();
+									_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
+								}
 
-							newFrameBufferState.Composite(rectangleData, x, y);
-							//rectangleData.Composite(newFrameBufferState, x, y);
+								var compressedDataLength = (int)_Reader.ReadUInt32();
+								_MemoryStreamCompressed.Position = 0;
+								_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
+								_MemoryStreamCompressed.SetLength(compressedDataLength);
+								_MemoryStreamCompressed.Position = 0;
+
+								if (_DeflateStream == null)
+								{
+									_MemoryStreamCompressed.Position = 2;
+									_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress, false);
+									_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
+								}
+
+								rectangleData = _DeflateStreamReader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+							}
+							else
+							{
+								rectangleData = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+							}
+
+							WriteRectangle(newFrameBufferState, _FrameBufferStateStride, rectangle, rectangleData);
 						}
 
 						if (encodingType == VNCEncoding.LastRect)
@@ -622,40 +633,47 @@ namespace MiniVNCClient
 						}
 					}
 
-					if (cursor != null)
+					_FrameBufferState = newFrameBufferState;
+
+					Task.Run(() =>
 					{
-						newFrameBufferState.Composite(cursor, (int)cursorPoint.X, (int)cursorPoint.Y, CompositeOperator.Atop);
-					}
+						var encodingStartTime = DateTime.Now;
 
-					//newFrameBufferState.Alpha(AlphaOption.Off);
-					//newFrameBufferState.Alpha(AlphaOption.Remove);
-					//newFrameBufferState.Format = MagickFormat.Bmp;
+						using (var memoryStream = new MemoryStream())
+						using (var arquivo = File.Open($@"Imagens\{updateStartTime:HH_mm_ss.fff}.png", FileMode.Create, FileAccess.Write, FileShare.Read))
+						using (var image = new ImageMagick.MagickImage(newFrameBufferState, new ImageMagick.PixelReadSettings(SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight, ImageMagick.StorageType.Char, "BGRA")))
+						{
+							image.Format = ImageMagick.MagickFormat.Png32;
 
-					using (var arquivo = File.Open($@"Imagens\{DateTime.Now:HH_mm_ss.fff}.bmp", FileMode.Create, FileAccess.Write, FileShare.Read))
-					{
-						newFrameBufferState.Write(arquivo);
-					}
+							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-level", "2");
+							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-filter", "2");
 
-					//_FrameBufferState.Dispose();
-					//_FrameBufferState = newFrameBufferState;
+							image.Write(memoryStream);
 
-					Trace.TraceInformation($"Finished updating framebuffer after {stopwatch.Elapsed.TotalSeconds} seconds");
+							var encodingFinishTime = DateTime.Now;
+							Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, image size {memoryStream.Length:N} bytes, total time {(encodingFinishTime - updateStartTime).TotalSeconds} seconds");
+
+							memoryStream.Position = 0;
+							memoryStream.CopyTo(arquivo);
+						}
+					});
+
+					Trace.TraceInformation($"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
 				}
-
-				stopwatch.Stop();
+			/*
 			}
 			catch (Exception ex)
 			{
 				Trace.TraceError($"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
 			}
+			*/
 		}
 
 		public void ServerCutTextHandler()
 		{
 			var padding = _Reader.ReadBytes(3);
 
-			var textLength = BinaryConverter.ReadInt32(_Reader);
-			var text = Encoding.UTF8.GetString(_Reader.ReadBytes(textLength));
+			var text = _Reader.ReadString((int)_Reader.ReadUInt32());
 			Trace.TraceInformation($"Server cut text: \"{text}\"");
 		}
 

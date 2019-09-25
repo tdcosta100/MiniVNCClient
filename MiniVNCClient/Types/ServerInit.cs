@@ -20,32 +20,18 @@ namespace MiniVNCClient.Types
 
 		public static ServerInit Deserialize(Stream stream)
 		{
-			var reader = new BinaryReader(stream);
+			var reader = new Util.BinaryReader(stream);
 
 			var serverInit = new ServerInit()
 			{
-				FrameBufferWidth = Util.BinaryConverter.ToUInt16(reader.ReadBytes(2)),
-				FrameBufferHeight = Util.BinaryConverter.ToUInt16(reader.ReadBytes(2)),
-				PixelFormat = new PixelFormat()
-				{
-					BitsPerPixel = reader.ReadByte(),
-					Depth = reader.ReadByte(),
-					BigEndianFlag = reader.ReadByte(),
-					TrueColorFlag = reader.ReadByte(),
-					RedMax = Util.BinaryConverter.ToUInt16(reader.ReadBytes(2)),
-					GreenMax = Util.BinaryConverter.ToUInt16(reader.ReadBytes(2)),
-					BlueMax = Util.BinaryConverter.ToUInt16(reader.ReadBytes(2)),
-					RedShift = reader.ReadByte(),
-					GreenShift = reader.ReadByte(),
-					BlueShift = reader.ReadByte()
-				}
+				FrameBufferWidth = reader.ReadUInt16(),
+				FrameBufferHeight = reader.ReadUInt16(),
+				PixelFormat = PixelFormat.Deserialize(stream)
 			};
 
-			var padding = reader.ReadBytes(3);
+			var nameSize = reader.ReadUInt32();
 
-			var nameSize = Util.BinaryConverter.ToUInt32(reader.ReadBytes(4));
-
-			serverInit.Name = Encoding.UTF8.GetString(reader.ReadBytes((int)nameSize));
+			serverInit.Name = reader.ReadString((int)nameSize);
 
 			return serverInit;
 		}

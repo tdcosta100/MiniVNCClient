@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -21,5 +22,27 @@ namespace MiniVNCClient.Types
 		public byte GreenShift;
 		public byte BlueShift;
 		public byte[] Padding;
+
+		public int BytesPerPixel => (BitsPerPixel + 7) / 8;
+
+		public static PixelFormat Deserialize(Stream stream)
+		{
+			var reader = new Util.BinaryReader(stream);
+
+			return new PixelFormat()
+			{
+				BitsPerPixel = reader.ReadByte(),
+				Depth = reader.ReadByte(),
+				BigEndianFlag = reader.ReadByte(),
+				TrueColorFlag = reader.ReadByte(),
+				RedMax = reader.ReadUInt16(),
+				GreenMax = reader.ReadUInt16(),
+				BlueMax = reader.ReadUInt16(),
+				RedShift = reader.ReadByte(),
+				GreenShift = reader.ReadByte(),
+				BlueShift = reader.ReadByte(),
+				Padding = reader.ReadBytes(3),
+			};
+		}
 	}
 }
