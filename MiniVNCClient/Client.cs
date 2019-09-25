@@ -8,8 +8,6 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
-using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -25,23 +23,42 @@ namespace MiniVNCClient
 		private static readonly Version _ClientVersion = new Version(3, 8);
 
 		private static readonly RangeCollection<int, SecurityType?> _SecurityTypes;
-		private static readonly SecurityType[] _SupportedSecurityTypes = new[] { SecurityType.Invalid, SecurityType.None };
+		private static readonly SecurityType[] _SupportedSecurityTypes =
+			new[]
+			{
+				SecurityType.Invalid,
+				SecurityType.None
+			};
 
 		private static readonly RangeCollection<int, VNCEncoding?> _Encodings;
-		private static readonly VNCEncoding[] _SupportedEncodings = new[] {
-			/* VNCEncoding.Raw, */
-			VNCEncoding.Cursor,
-			VNCEncoding.CopyRect,
-			VNCEncoding.LastRect,
-			/* VNCEncoding.Zlib, */
-			VNCEncoding.Hextile
-		};
+		private static readonly VNCEncoding[] _SupportedEncodings =
+			new[]
+			{
+				/* VNCEncoding.Raw, */
+				VNCEncoding.Cursor,
+				VNCEncoding.CopyRect,
+				VNCEncoding.LastRect,
+				/* VNCEncoding.Zlib, */
+				/* VNCEncoding.Hextile */
+				VNCEncoding.ZlibHex
+			};
 
 		private static readonly RangeCollection<int, ClientToServerMessageType?> _ClientToServerMessageTypes;
-		private static readonly ClientToServerMessageType[] _SupportedClientToServerMessageTypes = new[] { ClientToServerMessageType.SetEncodings, ClientToServerMessageType.FramebufferUpdateRequest, ClientToServerMessageType.EnableContinuousUpdates };
+		private static readonly ClientToServerMessageType[] _SupportedClientToServerMessageTypes =
+			new[]
+			{
+				ClientToServerMessageType.SetEncodings,
+				ClientToServerMessageType.FramebufferUpdateRequest,
+				ClientToServerMessageType.EnableContinuousUpdates
+			};
 
 		private static readonly RangeCollection<int, ServerToClientMessageType?> _ServerToClientMessageTypes;
-		private static readonly ServerToClientMessageType[] _SupportedServerToClientMessageTypes = new[] { ServerToClientMessageType.FramebufferUpdate, ServerToClientMessageType.EndOfContinuousUpdates };
+		private static readonly ServerToClientMessageType[] _SupportedServerToClientMessageTypes =
+			new[]
+			{
+				ServerToClientMessageType.FramebufferUpdate,
+				ServerToClientMessageType.EndOfContinuousUpdates
+			};
 
 		private Stream _Stream;
 		private Util.BinaryReader _Reader;
@@ -58,6 +75,8 @@ namespace MiniVNCClient
 		private BinaryWriter _MemoryStreamCompressedWriter = null;
 		private DeflateStream _DeflateStream = null;
 		private Util.BinaryReader _DeflateStreamReader = null;
+		private DeflateStream _DeflateStream2 = null;
+		private Util.BinaryReader _DeflateStreamReader2 = null;
 		#endregion
 
 		#region Events
@@ -393,9 +412,9 @@ namespace MiniVNCClient
 			{
 				while (true)
 				{
-					var ultimaAtualizacao = DateTime.Now;
+					var updateTime = DateTime.Now;
 					FramebufferUpdateRequest(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-					Task.Delay(TimeSpan.FromSeconds(Math.Max(0.1 - (DateTime.Now - ultimaAtualizacao).TotalSeconds, 0))).Wait();
+					Task.Delay(TimeSpan.FromSeconds(Math.Max(5 - (DateTime.Now - updateTime).TotalSeconds, 0))).Wait();
 				}
 			});
 
@@ -466,10 +485,8 @@ namespace MiniVNCClient
 
 		private void FramebufferUpdateHandler()
 		{
-			/*
 			try
 			{
-			*/
 				var updateStartTime = DateTime.Now;
 
 				var padding = _Reader.ReadByte();
@@ -509,8 +526,10 @@ namespace MiniVNCClient
 							
 						}
 
-						if (encodingType == VNCEncoding.Hextile)
+						if (encodingType == VNCEncoding.Hextile || encodingType == VNCEncoding.ZlibHex)
 						{
+							var reader = _Reader;
+
 							byte[] foregroundColor = null;
 							byte[] backgroundColor = null;
 
@@ -527,26 +546,61 @@ namespace MiniVNCClient
 
 									var subencodingMask = (HextileSubencodingMask)_Reader.ReadByte();
 
-									//Trace.TraceInformation($"Drawing hextile {{{hextile}}}, subencoding mask: {subencodingMask}");
-
-									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw))
+									if (encodingType == VNCEncoding.ZlibHex && subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw | HextileSubencodingMask.Zlib))
 									{
-										var textileData = _Reader.ReadBytes(hextile.Width * hextile.Height * SessionInfo.PixelFormat.BytesPerPixel);
+										if (_MemoryStreamCompressed == null)
+										{
+											_MemoryStreamCompressed = new MemoryStream();
+											_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
+										}
+
+										var compressedDataLength = (int)_Reader.ReadUInt16();
+
+										_MemoryStreamCompressed.Position = 0;
+										_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
+										_MemoryStreamCompressed.SetLength(compressedDataLength);
+										_MemoryStreamCompressed.Position = 0;
+
+										if (_DeflateStream == null || _DeflateStream2 == null)
+										{
+											_MemoryStreamCompressed.Position = 2;
+
+											_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
+											_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
+
+											_DeflateStream2 = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
+											_DeflateStreamReader2 = new Util.BinaryReader(_DeflateStream2);
+										}
+									}
+
+									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw | HextileSubencodingMask.ZlibRaw))
+									{
+										if (subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw))
+										{
+											reader = _DeflateStreamReader;
+										}
+
+										var textileData = reader.ReadBytes(hextile.Width * hextile.Height * SessionInfo.PixelFormat.BytesPerPixel);
 
 										WriteRectangle(newFrameBufferState, _FrameBufferStateStride, hextile, textileData);
 									}
 									else
 									{
+										if (subencodingMask.HasFlag(HextileSubencodingMask.Zlib))
+										{
+											reader = _DeflateStreamReader2;
+										}
+
 										byte[] textileData = null;
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.BackgroundSpecified))
 										{
-											backgroundColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+											backgroundColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
 										}
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ForegroundSpecified))
 										{
-											foregroundColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+											foregroundColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
 										}
 
 										textileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
@@ -555,9 +609,7 @@ namespace MiniVNCClient
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
 										{
-											var numberOfSubrectangles = _Reader.ReadByte();
-
-											//Trace.TraceInformation($"Number of subrectangles: {numberOfRectangles}");
+											var numberOfSubrectangles = reader.ReadByte();
 
 											for (int subrectangleIndex = 0; subrectangleIndex < numberOfSubrectangles; subrectangleIndex++)
 											{
@@ -565,15 +617,15 @@ namespace MiniVNCClient
 
 												if (subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
 												{
-													subrectangleColor = _Reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+													subrectangleColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
 												}
 												else
 												{
 													subrectangleColor = foregroundColor;
 												}
 
-												var subrectangleXY = _Reader.ReadByte();
-												var subrectangleWidthHeight = _Reader.ReadByte();
+												var subrectangleXY = reader.ReadByte();
+												var subrectangleWidthHeight = reader.ReadByte();
 
 												var subrectangle = new Int32Rect(
 													x: ((subrectangleXY & 0xf0) >> 4) + hextile.X,
@@ -639,7 +691,6 @@ namespace MiniVNCClient
 					{
 						var encodingStartTime = DateTime.Now;
 
-						using (var memoryStream = new MemoryStream())
 						using (var arquivo = File.Open($@"Imagens\{updateStartTime:HH_mm_ss.fff}.png", FileMode.Create, FileAccess.Write, FileShare.Read))
 						using (var image = new ImageMagick.MagickImage(newFrameBufferState, new ImageMagick.PixelReadSettings(SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight, ImageMagick.StorageType.Char, "BGRA")))
 						{
@@ -648,25 +699,22 @@ namespace MiniVNCClient
 							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-level", "2");
 							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-filter", "2");
 
-							image.Write(memoryStream);
+							image.Write(arquivo);
+
+							newFrameBufferState = null;
 
 							var encodingFinishTime = DateTime.Now;
-							Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, image size {memoryStream.Length:N} bytes, total time {(encodingFinishTime - updateStartTime).TotalSeconds} seconds");
-
-							memoryStream.Position = 0;
-							memoryStream.CopyTo(arquivo);
+							Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, image size {arquivo.Length:N} bytes, total time {(encodingFinishTime - updateStartTime).TotalSeconds} seconds at {encodingFinishTime:dd/MM/yyyy HH:mm:ss.fff}");
 						}
 					});
 
 					Trace.TraceInformation($"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
 				}
-			/*
 			}
 			catch (Exception ex)
 			{
 				Trace.TraceError($"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
 			}
-			*/
 		}
 
 		public void ServerCutTextHandler()
@@ -697,7 +745,7 @@ namespace MiniVNCClient
 			_Writer.Write((byte)messageType);
 			_Writer.Write(content);
 
-			//Trace.TraceInformation($"Message sent: {messageType}");
+			Trace.TraceInformation($"Message sent: {messageType} at {DateTime.Now:dd/MM/yyyy HH:mm:ss.fff}");
 		}
 
 		public void SetEncodings(IEnumerable<VNCEncoding> encodings)

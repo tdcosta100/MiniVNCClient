@@ -13,6 +13,8 @@ namespace MiniVNCClient.Types
 		BackgroundSpecified = 2,
 		ForegroundSpecified = 4,
 		AnySubrects = 8,
-		SubrectsColoured = 16
+		SubrectsColoured = 16,
+		ZlibRaw = 32,
+		Zlib = 64
 	}
 }
