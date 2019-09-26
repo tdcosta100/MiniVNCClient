@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace MiniVNCClient.Events
 {
-	public class PseudoEncodingEventArgs
+	public class PseudoEncodingEventArgs : EventArgs
 	{
 		#region Properties
 		public VNCEncoding PseudoEncoding { get; }

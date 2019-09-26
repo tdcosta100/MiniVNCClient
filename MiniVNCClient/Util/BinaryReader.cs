@@ -17,10 +17,6 @@ namespace MiniVNCClient.Util
 		public BinaryReader(Stream input, Encoding encoding) : base(input, encoding)
 		{
 		}
-
-		public BinaryReader(Stream input, Encoding encoding, bool leaveOpen) : base(input, encoding, leaveOpen)
-		{
-		}
 		#endregion
 
 		public override short ReadInt16()

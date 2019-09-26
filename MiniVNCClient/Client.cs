@@ -529,11 +529,9 @@ namespace MiniVNCClient
 
 			Trace.TraceInformation($"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
 
-			Task.Delay(TimeSpan.FromSeconds(1)).Wait();
-
 			SetEncodings(_SupportedEncodings);
 
-			Task.Run(
+			TaskEx.Run(
 				() =>
 				{
 					while (true)

@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 
 namespace MiniVNCClient.Events
 {
-	public abstract class ServerToClientMessageEventArgs
+	public abstract class ServerToClientMessageEventArgs : EventArgs
 	{
 		#region Properties
 		public ServerToClientMessageType Type { get; }
