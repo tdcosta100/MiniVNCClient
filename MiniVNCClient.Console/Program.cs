@@ -51,7 +51,7 @@ namespace MiniVNCClient.Console
 				{
 					Task.Delay(updateInterval).Wait();
 
-					while (true)
+					while (client.Connected)
 					{
 						var updateTime = DateTime.Now;
 						client.FramebufferUpdateRequest(true, 0, 0, client.SessionInfo.FrameBufferWidth, client.SessionInfo.FrameBufferHeight);
@@ -59,8 +59,11 @@ namespace MiniVNCClient.Console
 					}
 				});
 
+				Task.Delay(TimeSpan.FromMinutes(1)).Wait();
 
-				Task.Delay(TimeSpan.FromMinutes(10)).Wait();
+				client.Close();
+
+				Task.Delay(TimeSpan.FromSeconds(10)).Wait();
 			}
 		}
 	}

@@ -88,11 +88,13 @@ namespace MiniVNCClient
 		#endregion
 
 		#region Properties
+		public Version ClientVersion => _ClientVersion;
+
+		public bool Connected => _TcpClient?.Connected ?? false;
+
 		public Version ServerVersion { get; private set; }
 
 		public ServerInit SessionInfo { get; private set; }
-
-		public Version ClientVersion => _ClientVersion;
 
 		public string Password { get; set; }
 
@@ -518,9 +520,9 @@ namespace MiniVNCClient
 
 			Trace.TraceInformation("Sending client initialization");
 
-			clientInit.Serialize(_Stream);
+			clientInit.Serialize(_Writer);
 
-			SessionInfo = ServerInit.Deserialize(_Stream);
+			SessionInfo = ServerInit.Deserialize(_Reader);
 
 			Trace.TraceInformation("Received server initialization");
 
@@ -534,10 +536,30 @@ namespace MiniVNCClient
 			TaskEx.Run(
 				() =>
 				{
-					while (true)
+					Trace.TraceInformation("Starting to listen for server messages");
+
+					var retryCount = 0;
+
+					while (_TcpClient?.Connected ?? false)
 					{
-						MessageHandler((ServerToClientMessageType)_Reader.ReadByte());
+						try
+						{
+							MessageHandler((ServerToClientMessageType)_Reader.ReadByte());
+						}
+						catch (Exception ex)
+						{
+							Trace.TraceError($"Error reading messages from server: {ex.Message}\r\n{ex.StackTrace}");
+
+							retryCount = ++retryCount % 5;
+
+							if (retryCount == 0)
+							{
+								TaskEx.Delay(TimeSpan.FromMilliseconds(100)).Wait();
+							}
+						}
 					}
+
+					Trace.TraceInformation("Stopped to listen for server messages");
 				}
 			);
 		}
@@ -896,17 +918,24 @@ namespace MiniVNCClient
 			return Initialize();
 		}
 
-		public void SendMessage(ClientToServerMessageType messageType, byte[] content)
+		public bool SendMessage(ClientToServerMessageType messageType, byte[] content)
 		{
-			Trace.TraceInformation($"Sending message {messageType}");
+			if (_TcpClient?.Connected ?? false)
+			{
+				Trace.TraceInformation($"Sending message {messageType}");
 
-			_Writer.Write((byte)messageType);
-			_Writer.Write(content);
+				_Writer.Write((byte)messageType);
+				_Writer.Write(content);
+
+				return true;
+			}
+
+			return false;
 		}
 
-		public void SetEncodings(IEnumerable<VNCEncoding> encodings)
+		public bool SetEncodings(IEnumerable<VNCEncoding> encodings)
 		{
-			SendMessage(
+			return SendMessage(
 				messageType: ClientToServerMessageType.SetEncodings,
 				content:
 					new byte[1]
@@ -920,9 +949,9 @@ namespace MiniVNCClient
 			);
 		}
 
-		public void SetPixelFormat(PixelFormat pixelFormat)
+		public bool SetPixelFormat(PixelFormat pixelFormat)
 		{
-			SendMessage(
+			return SendMessage(
 				messageType: ClientToServerMessageType.SetPixelFormat,
 				content:
 					new byte[3]
@@ -957,9 +986,9 @@ namespace MiniVNCClient
 			);
 		}
 
-		public void FramebufferUpdateRequest(bool incremental, ushort x, ushort y, ushort width, ushort height)
+		public bool FramebufferUpdateRequest(bool incremental, ushort x, ushort y, ushort width, ushort height)
 		{
-			SendMessage(
+			return SendMessage(
 				messageType: ClientToServerMessageType.FramebufferUpdateRequest,
 				content:
 					new[]
@@ -974,9 +1003,9 @@ namespace MiniVNCClient
 			);
 		}
 
-		public void EnableContinuousUpdates(bool enable, ushort x, ushort y, ushort width, ushort height)
+		public bool EnableContinuousUpdates(bool enable, ushort x, ushort y, ushort width, ushort height)
 		{
-			SendMessage(
+			return SendMessage(
 				messageType: ClientToServerMessageType.EnableContinuousUpdates,
 				content:
 					new[]
@@ -991,13 +1020,49 @@ namespace MiniVNCClient
 			);
 		}
 
+		public void Close()
+		{
+			Dispose();
+		}
+
 		public void Dispose()
 		{
-			_TcpClient.Close();
+			_TcpClient?.Close();
+
+			_Stream?.Dispose();
 			_DeflateStream?.Dispose();
 			_DeflateStream2?.Dispose();
 			_MemoryStreamCompressed?.Dispose();
-		}
-		#endregion
+			_MemoryStreamCompressed2?.Dispose();
+
+			_Reader?.Dispose();
+			_Writer?.Dispose();
+			_DeflateStreamReader?.Dispose();
+			_DeflateStreamReader2?.Dispose();
+
+			_TcpClient = null;
+
+			_Stream = null;
+			_DeflateStream = null;
+			_DeflateStream2 = null;
+			_MemoryStreamCompressed = null;
+			_MemoryStreamCompressed2 = null;
+
+			_Reader = null;
+			_Writer = null;
+			_DeflateStreamReader = null;
+			_DeflateStreamReader2 = null;
+
+			ServerVersion = null;
+			SessionInfo = default;
+			Password = null;
+			FrameBufferState = null;
+			FrameBufferStateStride = default;
+			RemoteCursorSizeAndTipPosition = default;
+			RemoteCursorData = null;
+			RemoteCursorBitMask = null;
+			RemoteCursorLocation = default;
 	}
+	#endregion
+}
 }

@@ -18,15 +18,13 @@ namespace MiniVNCClient.Types
 		[NonSerialized]
 		public string Name;
 
-		public static ServerInit Deserialize(Stream stream)
+		public static ServerInit Deserialize(Util.BinaryReader reader)
 		{
-			var reader = new Util.BinaryReader(stream);
-
 			var serverInit = new ServerInit()
 			{
 				FrameBufferWidth = reader.ReadUInt16(),
 				FrameBufferHeight = reader.ReadUInt16(),
-				PixelFormat = PixelFormat.Deserialize(stream)
+				PixelFormat = PixelFormat.Deserialize(reader)
 			};
 
 			var nameSize = reader.ReadUInt32();

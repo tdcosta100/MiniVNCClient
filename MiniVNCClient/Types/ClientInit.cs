@@ -16,20 +16,14 @@ namespace MiniVNCClient.Types
 
 		public bool Shared { get => _Shared != 0; set => _Shared = (byte)(value ? 1 : 0); }
 
-		public void Serialize(Stream stream)
+		public void Serialize(BinaryWriter writer)
 		{
-			var writer = new BinaryWriter(stream);
 			writer.Write(_Shared);
 		}
 
 		public byte[] ToByteArray()
 		{
-			using (var memoryStream = new MemoryStream())
-			{
-				Serialize(memoryStream);
-
-				return memoryStream.ToArray();
-			}
+			return BitConverter.GetBytes(_Shared);
 		}
 	}
 }

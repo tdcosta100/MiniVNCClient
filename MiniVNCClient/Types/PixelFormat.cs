@@ -25,10 +25,8 @@ namespace MiniVNCClient.Types
 
 		public int BytesPerPixel => (BitsPerPixel + 7) / 8;
 
-		public static PixelFormat Deserialize(Stream stream)
+		public static PixelFormat Deserialize(Util.BinaryReader reader)
 		{
-			var reader = new Util.BinaryReader(stream);
-
 			return new PixelFormat()
 			{
 				BitsPerPixel = reader.ReadByte(),
