@@ -529,11 +529,9 @@ namespace MiniVNCClient
 
 			Trace.TraceInformation($"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
 
+			Task.Delay(TimeSpan.FromSeconds(1)).Wait();
+
 			SetEncodings(_SupportedEncodings);
-
-			//SetPixelFormat(SessionInfo.PixelFormat);
-
-			//EnableContinuousUpdates(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
 
 			Task.Run(
 				() =>
@@ -543,7 +541,7 @@ namespace MiniVNCClient
 						MessageHandler((ServerToClientMessageType)_Reader.ReadByte());
 					}
 				}
-			).Wait();
+			);
 		}
 
 		private void MessageHandler(ServerToClientMessageType messageType)
