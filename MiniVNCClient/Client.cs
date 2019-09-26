@@ -16,7 +16,7 @@ using System.Windows;
 
 namespace MiniVNCClient
 {
-	public class Client
+	public class Client : IDisposable
 	{
 		#region Fields
 		private static readonly Regex _RegexServerVersion = new Regex(@"RFB (?<major>\d{3})\.(?<minor>\d{3})\n");
@@ -29,18 +29,16 @@ namespace MiniVNCClient
 			{
 				SecurityType.Invalid,
 				SecurityType.None,
-				SecurityType.VNCAuthentication,
-				SecurityType.Tight
+				SecurityType.VNCAuthentication
 			};
 
 		private static readonly RangeCollection<int, VNCEncoding?> _Encodings;
 		private static readonly VNCEncoding[] _SupportedEncodings =
 			new[]
 			{
-				VNCEncoding.Tight,
+				VNCEncoding.Zlib,
 				VNCEncoding.ZlibHex,
 				VNCEncoding.Hextile,
-				VNCEncoding.Zlib,
 				VNCEncoding.Raw,
 				VNCEncoding.Cursor,
 				VNCEncoding.CopyRect,
@@ -64,35 +62,51 @@ namespace MiniVNCClient
 				ServerToClientMessageType.EndOfContinuousUpdates
 			};
 
+		private TcpClient _TcpClient;
 		private Stream _Stream;
 		private Util.BinaryReader _Reader;
 		private BinaryWriter _Writer;
-
-		private byte[] _FrameBufferState;
-		private int _FrameBufferStateStride;
-		private byte[] _FrameBufferCursor;
-		private byte[] _FrameBufferCursorBitMask;
-		private Point _FrameBufferCursorTipPosition;
-		private Point _FrameBufferCursorLocation;
 
 		private MemoryStream _MemoryStreamCompressed = null;
 		private BinaryWriter _MemoryStreamCompressedWriter = null;
 		private DeflateStream _DeflateStream = null;
 		private Util.BinaryReader _DeflateStreamReader = null;
+		private MemoryStream _MemoryStreamCompressed2 = null;
+		private BinaryWriter _MemoryStreamCompressedWriter2 = null;
 		private DeflateStream _DeflateStream2 = null;
 		private Util.BinaryReader _DeflateStreamReader2 = null;
 		#endregion
 
 		#region Events
 		public EventHandler<FrameBufferUpdatedEventArgs> FrameBufferUpdated;
+
+		public EventHandler<RemoteCursorUpdatedEventArgs> RemoteCursorUpdated;
+
+		public EventHandler<ServerCutTextEventArgs> ServerCutText;
+
+		public EventHandler<EventArgs> Bell;
 		#endregion
 
 		#region Properties
-		public Version ServerVersion { get; set; }
+		public Version ServerVersion { get; private set; }
 
-		public ServerInit SessionInfo { get; set; }
+		public ServerInit SessionInfo { get; private set; }
 
 		public Version ClientVersion => _ClientVersion;
+
+		public string Password { get; set; }
+
+		public byte[] FrameBufferState { get; private set; }
+
+		public int FrameBufferStateStride { get; private set; }
+
+		public Int32Rect RemoteCursorSizeAndTipPosition { get; private set; }
+
+		public byte[] RemoteCursorData { get; private set; }
+
+		public byte[] RemoteCursorBitMask { get; private set; }
+
+		public Point RemoteCursorLocation { get; private set; }
 		#endregion
 
 		#region Constructors
@@ -290,6 +304,27 @@ namespace MiniVNCClient
 			return rectangleData;
 		}
 
+		private byte[] ReadRectangle(Int32Rect rectangle, byte[] buffer, int bufferStride)
+		{
+			var rectangleStride = rectangle.Width * SessionInfo.PixelFormat.BytesPerPixel;
+			var rectangleLineOffset = rectangle.X * SessionInfo.PixelFormat.BytesPerPixel;
+
+			byte[] rectangleData = new byte[rectangle.Height * rectangleStride];
+
+			for (int rectangleLine = 0; rectangleLine < rectangle.Height; rectangleLine++)
+			{
+				Buffer.BlockCopy(
+					src: buffer,
+					srcOffset: bufferStride * (rectangle.Y + rectangleLine) + rectangleLineOffset,
+					dst: rectangleData,
+					dstOffset: rectangleLine * rectangleStride,
+					count: rectangleStride
+				);
+			}
+
+			return rectangleData;
+		}
+
 		private void WriteRectangle(byte[] buffer, int bufferStride, Int32Rect rectangle, byte[] rectangleData)
 		{
 			var rectangleStride = rectangle.Width * SessionInfo.PixelFormat.BytesPerPixel;
@@ -302,32 +337,60 @@ namespace MiniVNCClient
 					srcOffset: rectangleLine * rectangleStride,
 					dst: buffer,
 					dstOffset: bufferStride * (rectangle.Y + rectangleLine) + rectangleLineOffset,
-					count: rectangleStride);
+					count: rectangleStride
+				);
 			}
 		}
 
-		private void Initialize(Stream stream)
+		private bool Initialize()
 		{
-			_Stream = stream;
-			_Reader = new Util.BinaryReader(_Stream);
-			_Writer = new BinaryWriter(_Stream);
+			try
+			{
+				NegotiateVersion();
+				NegotiateAuthentication();
+				InitializeSession();
+			}
+			catch (Exception ex)
+			{
+				Trace.TraceError($"Error during intialization: {ex.Message},\r\n{ex.StackTrace}");
+				return false;
+			}
 
-			NegotiateVersion();
-			NegotiateAuthentication();
-			InitializeSession();
+			return true;
 		}
 
 		private void NegotiateVersion()
 		{
-			var matchVersion = _RegexServerVersion.Match(Encoding.UTF8.GetString(_Reader.ReadBytes(12)));
+			Trace.TraceInformation("Negotiating version");
 
-			ServerVersion = new Version(int.Parse(matchVersion.Groups["major"].Value), int.Parse(matchVersion.Groups["minor"].Value));
+			var stringVersion = _Reader.ReadString(12);
 
-			_Writer.Write(Encoding.UTF8.GetBytes(string.Format(_VersionFormat, _ClientVersion.Major, _ClientVersion.Minor)));
+			Trace.TraceInformation($"Received {stringVersion}");
+
+			var matchVersion = _RegexServerVersion.Match(stringVersion);
+
+			if (matchVersion.Success)
+			{
+				ServerVersion = new Version(int.Parse(matchVersion.Groups["major"].Value), int.Parse(matchVersion.Groups["minor"].Value));
+
+				Trace.TraceInformation($"Detected server version: {ServerVersion}");
+
+				var clientStringVersion = string.Format(_VersionFormat, _ClientVersion.Major, _ClientVersion.Minor);
+
+				Trace.TraceInformation($"Sending client version {_ClientVersion}: {clientStringVersion}");
+
+				_Writer.Write(Encoding.UTF8.GetBytes(clientStringVersion));
+			}
+			else
+			{
+				throw new Exception("Server not recognized");
+			}
 		}
 
 		private void NegotiateAuthentication()
 		{
+			Trace.TraceInformation("Negotiating authentication method");
+
 			SecurityType[] securityTypes = new SecurityType[0];
 
 			if (ServerVersion >= new Version(3, 7))
@@ -368,11 +431,15 @@ namespace MiniVNCClient
 
 			if (!securityTypes.Any())
 			{
-				throw new Exception("No supported security types");
+				throw new Exception("No supported authentication methods");
 			}
+
+			Trace.TraceInformation($"Authentication methods {string.Join(", ", securityTypes.Select(s => s.ToString()))} are accepted by both server and client");
 
 			if (securityTypes.Contains(SecurityType.None))
 			{
+				Trace.TraceInformation($"Sending selected security type: {SecurityType.None}");
+
 				_Writer.Write((byte)SecurityType.None);
 
 				if (ServerVersion >= new Version(3, 8))
@@ -381,64 +448,24 @@ namespace MiniVNCClient
 
 					if (securityResult != SecurityResult.OK)
 					{
-						throw new Exception($"Connection failed: unknown reason");
-					}
-				}
-			}
-			else if (securityTypes.Contains(SecurityType.Tight))
-			{
-				_Writer.Write((byte)SecurityType.Tight);
-
-				var numberOfTunnels = (int)_Reader.ReadUInt32();
-
-				if (numberOfTunnels > 0)
-				{
-					var tunnels = Enumerable.Range(0, numberOfTunnels)
-						.Select(i => TightCapability.Deserialize(_Stream))
-						.GroupBy(t => t.Vendor)
-						.ToDictionary(
-							g => g.Key,
-							g => g.ToDictionary(t => t.Signature, t => t)
-						);
-
-					if (tunnels.ContainsKey("TGHT") && tunnels["TGHT"].ContainsKey("NOTUNNEL"))
-					{
-						_Writer.Write(tunnels["TGHT"]["NOTUNNEL"].Code);
-					}
-				}
-
-				var numberOfAuthenticationTypes = (int)_Reader.ReadUInt32();
-
-				if (numberOfAuthenticationTypes > 0)
-				{
-					var authenticationTypes = Enumerable.Range(0, numberOfAuthenticationTypes).Select(i => TightCapability.Deserialize(_Stream))
-						.GroupBy(a => a.Vendor)
-						.ToDictionary(
-							g => g.Key,
-							g => g.ToDictionary(a => a.Signature, a => a)
-						);
-
-					if (authenticationTypes.ContainsKey("TGHT") && authenticationTypes["TGHT"].ContainsKey("NOAUTH__"))
-					{
-						_Writer.Write(authenticationTypes["TGHT"]["NOAUTH__"].Code);
-					}
-					else if (authenticationTypes.ContainsKey("TGHT") && authenticationTypes["TGHT"].ContainsKey("VNCAUTH_"))
-					{
-						_Writer.Write(authenticationTypes["TGHT"]["VNCAUTH_"].Code);
+						throw new Exception($"Authentication failed: unknown reason");
 					}
 				}
 			}
 			else if (securityTypes.Contains(SecurityType.VNCAuthentication))
 			{
+				Trace.TraceInformation($"Sending selected authentication method: {SecurityType.VNCAuthentication}");
+
 				_Writer.Write((byte)SecurityType.VNCAuthentication);
 
 				var challenge = _Reader.ReadBytes(16);
 
-				var password = "testvnc";
+				Trace.TraceInformation("Challenge received");
 
-				var key = password.Substring(0, Math.Min(password.Length, 8))
+				var key = (Password ?? string.Empty)
 					.ToArray()
-					.Concat(new char[8 - password.Length])
+					.Concat(new char[8])
+					.Take(8)
 					.Select(
 						item =>
 						{
@@ -465,6 +492,8 @@ namespace MiniVNCClient
 
 					encryptor.TransformBlock(challenge, 0, 16, response, 0);
 
+					Trace.TraceInformation("Sending response");
+
 					_Writer.Write(response);
 				}
 
@@ -472,43 +501,39 @@ namespace MiniVNCClient
 
 				if (securityResult == SecurityResult.Failed)
 				{
-					throw new Exception($"Connection failed: incorrect password");
+					throw new Exception($"Authentication failed: incorrect password");
 				}
 				else if (securityResult == SecurityResult.FailedTooManyAttempts)
 				{
-					throw new Exception($"Connection failed: too many attempts");
+					throw new Exception($"Authentication failed: too many attempts");
 				}
 			}
+
+			Trace.TraceInformation("Authentication succeeded");
 		}
 
 		private void InitializeSession()
 		{
 			var clientInit = new ClientInit() { Shared = true };
 
+			Trace.TraceInformation("Sending client initialization");
+
 			clientInit.Serialize(_Stream);
 
 			SessionInfo = ServerInit.Deserialize(_Stream);
 
-			_FrameBufferStateStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
-			_FrameBufferState = new byte[SessionInfo.FrameBufferHeight * _FrameBufferStateStride];
+			Trace.TraceInformation("Received server initialization");
+
+			FrameBufferStateStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
+			FrameBufferState = new byte[SessionInfo.FrameBufferHeight * FrameBufferStateStride];
+
+			Trace.TraceInformation($"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
 
 			SetEncodings(_SupportedEncodings);
 
 			//SetPixelFormat(SessionInfo.PixelFormat);
 
-			//FramebufferUpdateRequest(false, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-
 			//EnableContinuousUpdates(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-
-			Task.Run(() =>
-			{
-				while (true)
-				{
-					var updateTime = DateTime.Now;
-					FramebufferUpdateRequest(true, 0, 0, SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight);
-					Task.Delay(TimeSpan.FromSeconds(Math.Max(5 - (DateTime.Now - updateTime).TotalSeconds, 0))).Wait();
-				}
-			});
 
 			Task.Run(
 				() =>
@@ -545,7 +570,6 @@ namespace MiniVNCClient
 				case ServerToClientMessageType.UltraVNC:
 					break;
 				case ServerToClientMessageType.FileTransfer:
-					FileTransferHandler();
 					break;
 				case ServerToClientMessageType.TextChat:
 					break;
@@ -584,14 +608,14 @@ namespace MiniVNCClient
 
 				var padding = _Reader.ReadByte();
 
-				var numberOfRectangles = _Reader.ReadInt16();
+				var numberOfRectangles = _Reader.ReadUInt16();
 
 				Trace.TraceInformation($"Total rectangles: {numberOfRectangles}");
 
 				if (numberOfRectangles > 0)
 				{
-					var newFrameBufferState = new byte[_FrameBufferState.Length];
-					Buffer.BlockCopy(_FrameBufferState, 0, newFrameBufferState, 0, _FrameBufferState.Length);
+					var newFrameBufferState = new byte[FrameBufferState.Length];
+					Buffer.BlockCopy(FrameBufferState, 0, newFrameBufferState, 0, FrameBufferState.Length);
 
 					for (int rectangleIndex = 0; rectangleIndex < numberOfRectangles; rectangleIndex++)
 					{
@@ -607,21 +631,33 @@ namespace MiniVNCClient
 
 						Trace.TraceInformation($"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
 
+						if (encodingType == VNCEncoding.LastRect)
+						{
+							break;
+						}
+
 						if (encodingType == VNCEncoding.Cursor)
 						{
-							_FrameBufferCursor = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
-							_FrameBufferCursorBitMask = _Reader.ReadBytes(((rectangle.Width + 7) / 8) * rectangle.Height);
-							_FrameBufferCursorTipPosition = new Point(rectangle.X, rectangle.Y);
+							RemoteCursorSizeAndTipPosition = rectangle;
+							RemoteCursorData = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+							RemoteCursorBitMask = _Reader.ReadBytes(((rectangle.Width + 7) / 8) * rectangle.Height);
+
+							RemoteCursorUpdated?.Invoke(this, new RemoteCursorUpdatedEventArgs(RemoteCursorSizeAndTipPosition, RemoteCursorData, RemoteCursorBitMask));
 						}
 
 						if (encodingType == VNCEncoding.CopyRect)
 						{
-							
+							var originalRectangle = rectangle;
+							originalRectangle.X = _Reader.ReadUInt16();
+							originalRectangle.Y = _Reader.ReadUInt16();
+
+							var rectangleData = ReadRectangle(originalRectangle, newFrameBufferState, FrameBufferStateStride);
+							WriteRectangle(newFrameBufferState, FrameBufferStateStride, rectangle, rectangleData);
 						}
 
 						if (encodingType == VNCEncoding.Hextile || encodingType == VNCEncoding.ZlibHex)
 						{
-							var reader = _Reader;
+							Util.BinaryReader reader = null;
 
 							byte[] foregroundColor = null;
 							byte[] backgroundColor = null;
@@ -639,49 +675,81 @@ namespace MiniVNCClient
 
 									var subencodingMask = (HextileSubencodingMask)_Reader.ReadByte();
 
-									if (encodingType == VNCEncoding.ZlibHex && subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw | HextileSubencodingMask.Zlib))
+									if (encodingType == VNCEncoding.ZlibHex)
 									{
-										if (_MemoryStreamCompressed == null)
+										if (subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw))
 										{
-											_MemoryStreamCompressed = new MemoryStream();
-											_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
+											if (_MemoryStreamCompressed == null)
+											{
+												_MemoryStreamCompressed = new MemoryStream();
+												_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
+											}
+
+											var compressedDataLength = (int)_Reader.ReadUInt16();
+
+											_MemoryStreamCompressed.Position = 0;
+											_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
+											_MemoryStreamCompressed.SetLength(compressedDataLength);
+											_MemoryStreamCompressed.Position = 0;
+
+											if (_DeflateStream == null)
+											{
+												_MemoryStreamCompressed.Position = 2;
+
+												_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
+												_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
+											}
 										}
 
-										var compressedDataLength = (int)_Reader.ReadUInt16();
-
-										_MemoryStreamCompressed.Position = 0;
-										_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
-										_MemoryStreamCompressed.SetLength(compressedDataLength);
-										_MemoryStreamCompressed.Position = 0;
-
-										if (_DeflateStream == null || _DeflateStream2 == null)
+										if (subencodingMask.HasFlag(HextileSubencodingMask.Zlib))
 										{
-											_MemoryStreamCompressed.Position = 2;
+											if (_MemoryStreamCompressed2 == null)
+											{
+												_MemoryStreamCompressed2 = new MemoryStream();
+												_MemoryStreamCompressedWriter2 = new BinaryWriter(_MemoryStreamCompressed2);
+											}
 
-											_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
-											_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
+											var compressedDataLength = (int)_Reader.ReadUInt16();
 
-											_DeflateStream2 = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
-											_DeflateStreamReader2 = new Util.BinaryReader(_DeflateStream2);
+											_MemoryStreamCompressed2.Position = 0;
+											_MemoryStreamCompressedWriter2.Write(_Reader.ReadBytes(compressedDataLength));
+											_MemoryStreamCompressed2.SetLength(compressedDataLength);
+											_MemoryStreamCompressed2.Position = 0;
+
+											if (_DeflateStream2 == null)
+											{
+												_MemoryStreamCompressed2.Position = 2;
+
+												_DeflateStream2 = new DeflateStream(_MemoryStreamCompressed2, CompressionMode.Decompress);
+												_DeflateStreamReader2 = new Util.BinaryReader(_DeflateStream2);
+											}
 										}
 									}
 
-									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw | HextileSubencodingMask.ZlibRaw))
+									if (subencodingMask.HasFlag(HextileSubencodingMask.Raw) || subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw))
 									{
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw))
 										{
 											reader = _DeflateStreamReader;
 										}
+										else
+										{
+											reader = _Reader;
+										}
 
 										var textileData = reader.ReadBytes(hextile.Width * hextile.Height * SessionInfo.PixelFormat.BytesPerPixel);
 
-										WriteRectangle(newFrameBufferState, _FrameBufferStateStride, hextile, textileData);
+										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, textileData);
 									}
 									else
 									{
 										if (subencodingMask.HasFlag(HextileSubencodingMask.Zlib))
 										{
 											reader = _DeflateStreamReader2;
+										}
+										else
+										{
+											reader = _Reader;
 										}
 
 										byte[] textileData = null;
@@ -698,7 +766,7 @@ namespace MiniVNCClient
 
 										textileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
 
-										WriteRectangle(newFrameBufferState, _FrameBufferStateStride, hextile, textileData);
+										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, textileData);
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
 										{
@@ -729,7 +797,7 @@ namespace MiniVNCClient
 
 												var subrectangleData = FillRectangle(subrectangle.Width, subrectangle.Height, subrectangleColor);
 
-												WriteRectangle(newFrameBufferState, _FrameBufferStateStride, subrectangle, subrectangleData);
+												WriteRectangle(newFrameBufferState, FrameBufferStateStride, subrectangle, subrectangleData);
 											}
 										}
 									}
@@ -769,39 +837,15 @@ namespace MiniVNCClient
 								rectangleData = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
 							}
 
-							WriteRectangle(newFrameBufferState, _FrameBufferStateStride, rectangle, rectangleData);
-						}
-
-						if (encodingType == VNCEncoding.LastRect)
-						{
-							break;
+							WriteRectangle(newFrameBufferState, FrameBufferStateStride, rectangle, rectangleData);
 						}
 					}
 
-					_FrameBufferState = newFrameBufferState;
-
-					Task.Run(() =>
-					{
-						var encodingStartTime = DateTime.Now;
-
-						using (var arquivo = File.Open($@"Imagens\{updateStartTime:HH_mm_ss.fff}.png", FileMode.Create, FileAccess.Write, FileShare.Read))
-						using (var image = new ImageMagick.MagickImage(newFrameBufferState, new ImageMagick.PixelReadSettings(SessionInfo.FrameBufferWidth, SessionInfo.FrameBufferHeight, ImageMagick.StorageType.Char, "BGRA")))
-						{
-							image.Format = ImageMagick.MagickFormat.Png32;
-
-							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-level", "2");
-							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-filter", "2");
-
-							image.Write(arquivo);
-
-							newFrameBufferState = null;
-
-							var encodingFinishTime = DateTime.Now;
-							Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, image size {arquivo.Length:N} bytes, total time {(encodingFinishTime - updateStartTime).TotalSeconds} seconds at {encodingFinishTime:dd/MM/yyyy HH:mm:ss.fff}");
-						}
-					});
+					FrameBufferState = newFrameBufferState;
 
 					Trace.TraceInformation($"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
+
+					FrameBufferUpdated?.Invoke(this, new FrameBufferUpdatedEventArgs(updateStartTime, newFrameBufferState));
 				}
 			}
 			catch (Exception ex)
@@ -810,7 +854,7 @@ namespace MiniVNCClient
 			}
 		}
 
-		public void ServerCutTextHandler()
+		private void ServerCutTextHandler()
 		{
 			var padding = _Reader.ReadBytes(3);
 
@@ -820,109 +864,48 @@ namespace MiniVNCClient
 			{
 				var text = _Reader.ReadString();
 				Trace.TraceInformation($"Server cut text: \"{text}\"");
+
+				ServerCutText?.Invoke(this, new ServerCutTextEventArgs(text));
 			}
 		}
 
-		public void BellHandler()
+		private void BellHandler()
 		{
-			System.Media.SystemSounds.Beep.Play();
-		}
-
-		public void FileTransferHandler()
-		{
-			var reader = _Reader;
-
-			int contentType = reader.ReadByte();
-			int contentParamT = reader.ReadByte();
-			int contentParam = contentParamT;
-			contentParamT = reader.ReadByte();
-			contentParamT = contentParamT << 8;
-			contentParam = contentParam | contentParamT;
-
-			if (contentType == FileTransferContentType.RDrivesList || contentType == FileTransferContentType.DirPacket)
-			{
-				if (contentParam == FileTransferContentType.ADrivesList || contentParam == FileTransferContentType.ADirectory)
-				{
-					var ignore = reader.ReadBytes(4);
-
-					var length = reader.ReadInt32();
-
-					if (length > 0)
-					{
-						var names = Encoding.UTF8.GetString(reader.ReadBytes(length));
-					}
-
-					ignore = null;
-				}
-				else if (contentParam == 0)
-				{
-
-				}
-			}
-			else if (contentType == FileTransferContentType.FileHeader)
-			{
-				long size = reader.ReadInt32();
-				int length = reader.ReadInt32();
-
-				var name = Encoding.UTF8.GetString(reader.ReadBytes(length));
-
-				long sizeH = reader.ReadInt32();
-
-				size += sizeH << 32;
-			}
-			else if (contentType == FileTransferContentType.FilePacket)
-			{
-				var size = reader.ReadInt32();
-
-				bool compressed = size != 0;
-
-				var length = reader.ReadInt32();
-
-				var data = reader.ReadBytes(length);
-			}
-			else if (contentType == FileTransferContentType.EndOfFile || contentType == FileTransferContentType.AbortFileTransfer)
-			{
-				var size = reader.ReadInt32();
-				var length = reader.ReadInt32();
-			}
-			else if (contentType == FileTransferContentType.CommandReturn || contentParam == FileTransferContentType.FileAcceptHeader)
-			{
-				var size = reader.ReadInt32();
-				var length = reader.ReadInt32();
-				var name = Encoding.UTF8.GetString(reader.ReadBytes(length));
-			}
-			else if (contentType == FileTransferContentType.FileChecksums)
-			{
-				var size = reader.ReadInt32();
-				var length = reader.ReadInt32();
-				var data = reader.ReadBytes(length);
-			}
-			else
-			{
-				var size = reader.ReadInt32();
-				var length = reader.ReadInt32();
-				var teste = reader.ReadBytes(64);
-			}
+			Bell?.Invoke(this, EventArgs.Empty);
 		}
 		#endregion
 
 		#region Public methods
-		public void Connect(string hostname, int port)
+		public bool Connect(string hostname, int port)
 		{
-			var tcpClient = new TcpClient();
-			tcpClient.Connect(hostname, port);
+			Trace.TraceInformation($"Connecting to {hostname}:{port}");
 
-			tcpClient.NoDelay = true;
+			try
+			{
+				_TcpClient = new TcpClient() { NoDelay = true };
+				_TcpClient.Connect(hostname, port);
+			}
+			catch (Exception ex)
+			{
+				Trace.TraceError($"Error connecting to {hostname}:{port}: {ex.Message}");
+				return false;
+			}
 
-			Initialize(tcpClient.GetStream());
+			_Stream = _TcpClient.GetStream();
+			_Reader = new Util.BinaryReader(_Stream);
+			_Writer = new BinaryWriter(_Stream);
+
+			Trace.TraceInformation("Connection successful, initializing session");
+
+			return Initialize();
 		}
 
 		public void SendMessage(ClientToServerMessageType messageType, byte[] content)
 		{
+			Trace.TraceInformation($"Sending message {messageType}");
+
 			_Writer.Write((byte)messageType);
 			_Writer.Write(content);
-
-			Trace.TraceInformation($"Message sent: {messageType} at {DateTime.Now:dd/MM/yyyy HH:mm:ss.fff}");
 		}
 
 		public void SetEncodings(IEnumerable<VNCEncoding> encodings)
@@ -976,11 +959,6 @@ namespace MiniVNCClient
 					.Concat(new byte[3])
 					.ToArray()
 			);
-
-			if (_SupportedEncodings)
-			{
-
-			}
 		}
 
 		public void FramebufferUpdateRequest(bool incremental, ushort x, ushort y, ushort width, ushort height)
@@ -1015,6 +993,14 @@ namespace MiniVNCClient
 					)
 					.ToArray()
 			);
+		}
+
+		public void Dispose()
+		{
+			_TcpClient.Close();
+			_DeflateStream?.Dispose();
+			_DeflateStream2?.Dispose();
+			_MemoryStreamCompressed?.Dispose();
 		}
 		#endregion
 	}

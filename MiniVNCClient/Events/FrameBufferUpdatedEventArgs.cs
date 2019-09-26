@@ -1,5 +1,4 @@
-﻿using ImageMagick;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -11,11 +10,17 @@ namespace MiniVNCClient.Events
 	public class FrameBufferUpdatedEventArgs : ServerToClientMessageEventArgs
 	{
 		#region Properties
-		public MagickImage CurrentFrameBuffer { get; set; }
+		public DateTime UpdateTime { get; }
 
-		public MagickImage CurrentCursor { get; set; }
+		public byte[] CurrentFrameBuffer { get; }
+		#endregion
 
-		public Rect? CurrentCursorPosition { get; set; }
+		#region Constructors
+		public FrameBufferUpdatedEventArgs(DateTime updateTime, byte[] currentFrameBuffer) : base(Types.ServerToClientMessageType.FramebufferUpdate)
+		{
+			UpdateTime = updateTime;
+			CurrentFrameBuffer = currentFrameBuffer;
+		}
 		#endregion
 	}
 }

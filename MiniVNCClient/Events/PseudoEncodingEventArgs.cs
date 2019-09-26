@@ -7,16 +7,16 @@ using System.Threading.Tasks;
 
 namespace MiniVNCClient.Events
 {
-	public abstract class ServerToClientMessageEventArgs
+	public class PseudoEncodingEventArgs
 	{
 		#region Properties
-		public ServerToClientMessageType Type { get; }
+		public VNCEncoding PseudoEncoding { get; }
 		#endregion
 
 		#region Constructors
-		public ServerToClientMessageEventArgs(ServerToClientMessageType type)
+		public PseudoEncodingEventArgs(VNCEncoding pseudoEncoding)
 		{
-			Type = type;
+			PseudoEncoding = pseudoEncoding;
 		}
 		#endregion
 	}
