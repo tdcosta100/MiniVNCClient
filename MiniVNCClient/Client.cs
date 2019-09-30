@@ -36,6 +36,7 @@ namespace MiniVNCClient
 		private static readonly VNCEncoding[] _SupportedEncodings =
 			new[]
 			{
+				VNCEncoding.ZRLE,
 				VNCEncoding.Zlib,
 				VNCEncoding.ZlibHex,
 				VNCEncoding.Hextile,
@@ -61,6 +62,8 @@ namespace MiniVNCClient
 				ServerToClientMessageType.FramebufferUpdate,
 				ServerToClientMessageType.EndOfContinuousUpdates
 			};
+
+		private static readonly ZRLESubencodingType[] _ZRLESubencodingTypes;
 
 		private TcpClient _TcpClient;
 		private Stream _Stream;
@@ -284,6 +287,22 @@ namespace MiniVNCClient
 				(254, 254, ServerToClientMessageType.VMware),
 				(255, 255, ServerToClientMessageType.QEMUServerMessage)
 			};
+
+			var zRLESubencodingTypes = new RangeCollection<int, ZRLESubencodingType>()
+			{
+				(0, 0, ZRLESubencodingType.Raw),
+				(1, 1, ZRLESubencodingType.SolidColor),
+				(2, 16, ZRLESubencodingType.PackedPalette),
+				(17, 127, ZRLESubencodingType.Unused),
+				(128, 128, ZRLESubencodingType.PlainRLE),
+				(129, 129, ZRLESubencodingType.Unused),
+				(130, 255, ZRLESubencodingType.PaletteRLE)
+			};
+
+			_ZRLESubencodingTypes =
+				Enumerable.Range(0, 256)
+				.Select(i => zRLESubencodingTypes.GetItemInRange(i))
+				.ToArray();
 		}
 
 		public Client()
@@ -296,14 +315,30 @@ namespace MiniVNCClient
 		{
 			var rectangleData = new byte[width * height * data.Length];
 
-			Buffer.BlockCopy(data, 0, rectangleData, 0, data.Length);
-
-			for (int iteration = 1; (iteration * data.Length) < rectangleData.Length; iteration *= 2)
-			{
-				Buffer.BlockCopy(rectangleData, 0, rectangleData, iteration * data.Length, Math.Min(iteration * data.Length, rectangleData.Length - iteration * data.Length));
-			}
+			FillData(data, rectangleData, 0, rectangleData.Length / data.Length);
 
 			return rectangleData;
+		}
+
+		private void FillData(byte[] source, byte[] destination, int destinationPosition, int count)
+		{
+			if (destinationPosition + count * source.Length > destination.Length)
+			{
+				throw new InvalidOperationException("Data offset and length must be contained inside destination bounds");
+			}
+
+			Buffer.BlockCopy(source, 0, destination, destinationPosition, source.Length);
+
+			for (int iteration = 1; iteration < count; iteration *= 2)
+			{
+				Buffer.BlockCopy(
+					src: destination,
+					srcOffset: destinationPosition,
+					dst: destination,
+					dstOffset: destinationPosition + iteration * source.Length,
+					count: Math.Min(iteration * source.Length, (count - iteration) * source.Length)
+				);
+			}
 		}
 
 		private byte[] ReadRectangle(Int32Rect rectangle, byte[] buffer, int bufferStride)
@@ -481,7 +516,7 @@ namespace MiniVNCClient
 									| (((item >> 3) & 0x01) << 4)
 									| (((item >> 2) & 0x01) << 5)
 									| (((item >> 1) & 0x01) << 6)
-									| (((item >> 0) & 0x01) << 7)
+									| ((item & 0x01) << 7)
 								);
 						}
 					)
@@ -673,12 +708,250 @@ namespace MiniVNCClient
 							WriteRectangle(newFrameBufferState, FrameBufferStateStride, rectangle, rectangleData);
 						}
 
+						if (encodingType == VNCEncoding.ZRLE)
+						{
+							if (_MemoryStreamCompressed == null)
+							{
+								_MemoryStreamCompressed = new MemoryStream();
+								_MemoryStreamCompressedWriter = new BinaryWriter(_MemoryStreamCompressed);
+							}
+
+							var compressedDataLength = (int)_Reader.ReadUInt32();
+
+							_MemoryStreamCompressed.Position = 0;
+							_MemoryStreamCompressedWriter.Write(_Reader.ReadBytes(compressedDataLength));
+							_MemoryStreamCompressed.SetLength(compressedDataLength);
+							_MemoryStreamCompressed.Position = 0;
+
+							if (_DeflateStream == null)
+							{
+								_MemoryStreamCompressed.Position = 2;
+
+								_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
+								_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
+							}
+
+							var reader = _DeflateStreamReader;
+
+							var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+							var bytesPerCPixel = (bytesPerPixel > 1) ? 3 : 1;
+
+							for (int rleTileY = 0; rleTileY < rectangle.Height; rleTileY += 64)
+							{
+								for (int rleTileX = 0; rleTileX < rectangle.Width; rleTileX += 64)
+								{
+									var rleTile = new Int32Rect(
+										x: rleTileX + rectangle.X,
+										y: rleTileY + rectangle.Y,
+										width: Math.Min(rectangle.Width - rleTileX, 64),
+										height: Math.Min(rectangle.Height - rleTileY, 64)
+									);
+
+									var rleTileData = new byte[rleTile.Width * rleTile.Height * bytesPerPixel];
+
+									var subencoding = reader.ReadByte();
+									var subencodingType = _ZRLESubencodingTypes[subencoding];
+
+									if (subencodingType == ZRLESubencodingType.Raw)
+									{
+										for (int i = 0; i < rleTile.Width * rleTile.Height; i++)
+										{
+											reader.Read(rleTileData, i * bytesPerPixel, bytesPerCPixel);
+										}
+									}
+									else if (subencodingType == ZRLESubencodingType.SolidColor)
+									{
+										var color = new byte[bytesPerPixel];
+										reader.Read(color, 0, bytesPerCPixel);
+
+										if (bytesPerPixel > bytesPerCPixel)
+										{
+											color[bytesPerPixel - 1] = 0xff;
+										}
+
+										FillData(color, rleTileData, 0, rleTileData.Length / color.Length);
+									}
+									else if (subencodingType == ZRLESubencodingType.PackedPalette)
+									{
+										var paletteSize = subencoding;
+
+										var palette = new byte[128][];
+
+										for (int i = 0; i < paletteSize; i++)
+										{
+											palette[i] = new byte[bytesPerPixel];
+											reader.Read(palette[i], 0, bytesPerCPixel);
+
+											if (bytesPerPixel > bytesPerCPixel)
+											{
+												palette[i][bytesPerPixel - 1] = 0xff;
+											}
+										}
+
+										if (paletteSize < 128)
+										{
+											for (int i = paletteSize; i < 128; i++)
+											{
+												palette[i] = new byte[bytesPerPixel];
+											}
+										}
+
+										var bitsPerPixel = 0;
+
+										if (paletteSize > 16)
+										{
+											bitsPerPixel = 8;
+										}
+										else if (paletteSize > 4)
+										{
+											bitsPerPixel = 4;
+										}
+										else if (paletteSize > 2)
+										{
+											bitsPerPixel = 2;
+										}
+										else
+										{
+											bitsPerPixel = 1;
+										}
+
+										var mask = (byte)((1 << bitsPerPixel) - 1);
+
+										var currentByte = reader.ReadByte();
+
+										for (int i = 0; i < rleTile.Height; i++)
+										{
+											var shift = 8 - bitsPerPixel;
+
+											for (int j = 0; j < rleTile.Width; j++)
+											{
+												var color = palette[(currentByte >> shift) & mask];
+												reader.Read(color, 0, bytesPerCPixel);
+
+												if (bytesPerPixel > bytesPerCPixel)
+												{
+													color[bytesPerPixel - 1] = 0xff;
+												}
+
+												Buffer.BlockCopy(color, 0, rleTileData, (i * rleTile.Width + j) * color.Length, color.Length);
+
+												shift -= bitsPerPixel;
+
+												if (shift < 0)
+												{
+													shift = 8 - bitsPerPixel;
+													currentByte = reader.ReadByte();
+												}
+											}
+
+											if (shift < (8 - bitsPerPixel))
+											{
+												currentByte = reader.ReadByte();
+											}
+										}
+									}
+									else if (subencodingType == ZRLESubencodingType.PlainRLE)
+									{
+										var currentPosition = 0;
+
+										while (currentPosition < rleTileData.Length)
+										{
+											var color = new byte[bytesPerPixel];
+											reader.Read(color, 0, bytesPerCPixel);
+
+											if (bytesPerPixel > bytesPerCPixel)
+											{
+												color[bytesPerPixel - 1] = 0xff;
+											}
+
+											var runLength = 1;
+
+											var currentByte = reader.ReadByte();
+
+											while (currentByte == 0xff)
+											{
+												runLength += currentByte;
+
+												currentByte = reader.ReadByte();
+											}
+
+											runLength += currentByte;
+
+											FillData(color, rleTileData, currentPosition, Math.Min(runLength, (rleTileData.Length - currentPosition) / bytesPerPixel));
+
+											currentPosition += runLength * color.Length;
+										}
+									}
+									else if (subencodingType == ZRLESubencodingType.PaletteRLE)
+									{
+										var paletteSize = subencoding & 0x7f;
+
+										var palette = new byte[128][];
+
+										for (int i = 0; i < paletteSize; i++)
+										{
+											palette[i] = new byte[bytesPerPixel];
+											reader.Read(palette[i], 0, bytesPerCPixel);
+
+											if (bytesPerPixel > bytesPerCPixel)
+											{
+												palette[i][bytesPerPixel - 1] = 0xff;
+											}
+										}
+
+										if (paletteSize < 128)
+										{
+											for (int i = paletteSize; i < 128; i++)
+											{
+												palette[i] = new byte[bytesPerPixel];
+											}
+										}
+
+										var currentPosition = 0;
+
+										while (currentPosition < rleTileData.Length)
+										{
+											var currentByte = reader.ReadByte();
+
+											var paletteIndex = currentByte & 0x7f;
+
+											var color = palette[paletteIndex];
+
+											var runLength = 1;
+
+											if ((currentByte & 0x80) != 0)
+											{
+												currentByte = reader.ReadByte();
+
+												while (currentByte == 0xff)
+												{
+													runLength += currentByte;
+
+													currentByte = reader.ReadByte();
+												}
+
+												runLength += currentByte;
+											}
+
+											FillData(color, rleTileData, currentPosition, Math.Min(runLength, (rleTileData.Length - currentPosition) / bytesPerPixel));
+
+											currentPosition += runLength * color.Length;
+										}
+									}
+
+									WriteRectangle(newFrameBufferState, FrameBufferStateStride, rleTile, rleTileData);
+								}
+							}
+						}
+
 						if (encodingType == VNCEncoding.Hextile || encodingType == VNCEncoding.ZlibHex)
 						{
 							Util.BinaryReader reader = null;
 
 							byte[] foregroundColor = null;
 							byte[] backgroundColor = null;
+
+							var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
 
 							for (int hextileY = 0; hextileY < rectangle.Height; hextileY += 16)
 							{
@@ -755,9 +1028,9 @@ namespace MiniVNCClient
 											reader = _Reader;
 										}
 
-										var textileData = reader.ReadBytes(hextile.Width * hextile.Height * SessionInfo.PixelFormat.BytesPerPixel);
+										var hextileData = reader.ReadBytes(hextile.Width * hextile.Height * bytesPerPixel);
 
-										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, textileData);
+										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, hextileData);
 									}
 									else
 									{
@@ -770,21 +1043,21 @@ namespace MiniVNCClient
 											reader = _Reader;
 										}
 
-										byte[] textileData = null;
+										byte[] hextileData = null;
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.BackgroundSpecified))
 										{
-											backgroundColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+											backgroundColor = reader.ReadBytes(bytesPerPixel);
 										}
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ForegroundSpecified))
 										{
-											foregroundColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+											foregroundColor = reader.ReadBytes(bytesPerPixel);
 										}
 
-										textileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
+										hextileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
 
-										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, textileData);
+										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, hextileData);
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
 										{
@@ -796,7 +1069,7 @@ namespace MiniVNCClient
 
 												if (subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
 												{
-													subrectangleColor = reader.ReadBytes(SessionInfo.PixelFormat.BytesPerPixel);
+													subrectangleColor = reader.ReadBytes(bytesPerPixel);
 												}
 												else
 												{
@@ -844,7 +1117,8 @@ namespace MiniVNCClient
 								if (_DeflateStream == null)
 								{
 									_MemoryStreamCompressed.Position = 2;
-									_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress, false);
+
+									_DeflateStream = new DeflateStream(_MemoryStreamCompressed, CompressionMode.Decompress);
 									_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
 								}
 
@@ -1062,7 +1336,7 @@ namespace MiniVNCClient
 			RemoteCursorData = null;
 			RemoteCursorBitMask = null;
 			RemoteCursorLocation = default;
+		}
+		#endregion
 	}
-	#endregion
-}
 }

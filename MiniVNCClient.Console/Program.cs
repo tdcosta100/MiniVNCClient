@@ -28,6 +28,9 @@ namespace MiniVNCClient.Console
 						{
 							image.Format = ImageMagick.MagickFormat.Png32;
 
+							image.Alpha(ImageMagick.AlphaOption.Off);
+							image.Alpha(ImageMagick.AlphaOption.Remove);
+
 							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-level", "2");
 							image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-filter", "2");
 
