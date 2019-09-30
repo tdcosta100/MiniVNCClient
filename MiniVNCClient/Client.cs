@@ -817,36 +817,23 @@ namespace MiniVNCClient
 
 										var mask = (byte)((1 << bitsPerPixel) - 1);
 
-										var currentByte = reader.ReadByte();
+										var stride = (rleTile.Width + 8 / bitsPerPixel - 1) * bitsPerPixel / 8;
 
 										for (int i = 0; i < rleTile.Height; i++)
 										{
-											var shift = 8 - bitsPerPixel;
+											var packedPixels = reader.ReadBytes(stride);
 
 											for (int j = 0; j < rleTile.Width; j++)
 											{
-												var color = palette[(currentByte >> shift) & mask];
-												reader.Read(color, 0, bytesPerCPixel);
+												// packedPixels[j * bitsPerPixel / 8] => current byte
+												// >> (8 - ((j * bitsPerPixel) % 8) - bitsPerPixel)) => current pixel value inside byte
+												// & mask => discard pixels that don't match the palette index
 
-												if (bytesPerPixel > bytesPerCPixel)
-												{
-													color[bytesPerPixel - 1] = 0xff;
-												}
+												var paletteIndex = (packedPixels[j * bitsPerPixel / 8] >> (8 - ((j * bitsPerPixel) % 8) - bitsPerPixel)) & mask;
+
+												var color = palette[paletteIndex];
 
 												Buffer.BlockCopy(color, 0, rleTileData, (i * rleTile.Width + j) * color.Length, color.Length);
-
-												shift -= bitsPerPixel;
-
-												if (shift < 0)
-												{
-													shift = 8 - bitsPerPixel;
-													currentByte = reader.ReadByte();
-												}
-											}
-
-											if (shift < (8 - bitsPerPixel))
-											{
-												currentByte = reader.ReadByte();
 											}
 										}
 									}
