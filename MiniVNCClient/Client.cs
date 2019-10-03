@@ -81,13 +81,13 @@ namespace MiniVNCClient
 		#endregion
 
 		#region Events
-		public EventHandler<FrameBufferUpdatedEventArgs> FrameBufferUpdated;
+		public event EventHandler<FrameBufferUpdatedEventArgs> FrameBufferUpdated;
 
-		public EventHandler<RemoteCursorUpdatedEventArgs> RemoteCursorUpdated;
+		public event EventHandler<RemoteCursorUpdatedEventArgs> RemoteCursorUpdated;
 
-		public EventHandler<ServerCutTextEventArgs> ServerCutText;
+		public event EventHandler<ServerCutTextEventArgs> ServerCutText;
 
-		public EventHandler<EventArgs> Bell;
+		public event EventHandler<EventArgs> Bell;
 		#endregion
 
 		#region Properties
@@ -101,6 +101,8 @@ namespace MiniVNCClient
 
 		public string Password { get; set; }
 
+		public Int32Rect[] UpdatedAreas { get; private set; }
+
 		public byte[] FrameBufferState { get; private set; }
 
 		public int FrameBufferStateStride { get; private set; }
@@ -112,6 +114,8 @@ namespace MiniVNCClient
 		public byte[] RemoteCursorBitMask { get; private set; }
 
 		public Point RemoteCursorLocation { get; private set; }
+
+		public TraceSource TraceSource { get; set; }
 		#endregion
 
 		#region Constructors
@@ -389,7 +393,7 @@ namespace MiniVNCClient
 			}
 			catch (Exception ex)
 			{
-				Trace.TraceError($"Error during intialization: {ex.Message},\r\n{ex.StackTrace}");
+				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error during intialization: {ex.Message},\r\n{ex.StackTrace}");
 				return false;
 			}
 
@@ -398,11 +402,11 @@ namespace MiniVNCClient
 
 		private void NegotiateVersion()
 		{
-			Trace.TraceInformation("Negotiating version");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Negotiating version");
 
 			var stringVersion = _Reader.ReadString(12);
 
-			Trace.TraceInformation($"Received {stringVersion}");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Received {stringVersion}");
 
 			var matchVersion = _RegexServerVersion.Match(stringVersion);
 
@@ -410,11 +414,11 @@ namespace MiniVNCClient
 			{
 				ServerVersion = new Version(int.Parse(matchVersion.Groups["major"].Value), int.Parse(matchVersion.Groups["minor"].Value));
 
-				Trace.TraceInformation($"Detected server version: {ServerVersion}");
+				TraceSource.TraceEvent(TraceEventType.Information, 0, $"Detected server version: {ServerVersion}");
 
 				var clientStringVersion = string.Format(_VersionFormat, _ClientVersion.Major, _ClientVersion.Minor);
 
-				Trace.TraceInformation($"Sending client version {_ClientVersion}: {clientStringVersion}");
+				TraceSource.TraceEvent(TraceEventType.Information, 0, $"Sending client version {_ClientVersion}: {clientStringVersion}");
 
 				_Writer.Write(Encoding.UTF8.GetBytes(clientStringVersion));
 			}
@@ -426,7 +430,7 @@ namespace MiniVNCClient
 
 		private void NegotiateAuthentication()
 		{
-			Trace.TraceInformation("Negotiating authentication method");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Negotiating authentication method");
 
 			SecurityType[] securityTypes = new SecurityType[0];
 
@@ -471,11 +475,11 @@ namespace MiniVNCClient
 				throw new Exception("No supported authentication methods");
 			}
 
-			Trace.TraceInformation($"Authentication methods {string.Join(", ", securityTypes.Select(s => s.ToString()))} are accepted by both server and client");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Authentication methods {string.Join(", ", securityTypes.Select(s => s.ToString()))} are accepted by both server and client");
 
 			if (securityTypes.Contains(SecurityType.None))
 			{
-				Trace.TraceInformation($"Sending selected security type: {SecurityType.None}");
+				TraceSource.TraceEvent(TraceEventType.Information, 0, $"Sending selected security type: {SecurityType.None}");
 
 				_Writer.Write((byte)SecurityType.None);
 
@@ -491,13 +495,13 @@ namespace MiniVNCClient
 			}
 			else if (securityTypes.Contains(SecurityType.VNCAuthentication))
 			{
-				Trace.TraceInformation($"Sending selected authentication method: {SecurityType.VNCAuthentication}");
+				TraceSource.TraceEvent(TraceEventType.Information, 0, $"Sending selected authentication method: {SecurityType.VNCAuthentication}");
 
 				_Writer.Write((byte)SecurityType.VNCAuthentication);
 
 				var challenge = _Reader.ReadBytes(16);
 
-				Trace.TraceInformation("Challenge received");
+				TraceSource.TraceEvent(TraceEventType.Information, 0, "Challenge received");
 
 				var key = (Password ?? string.Empty)
 					.ToArray()
@@ -529,7 +533,7 @@ namespace MiniVNCClient
 
 					encryptor.TransformBlock(challenge, 0, 16, response, 0);
 
-					Trace.TraceInformation("Sending response");
+					TraceSource.TraceEvent(TraceEventType.Information, 0, "Sending response");
 
 					_Writer.Write(response);
 				}
@@ -546,32 +550,32 @@ namespace MiniVNCClient
 				}
 			}
 
-			Trace.TraceInformation("Authentication succeeded");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Authentication succeeded");
 		}
 
 		private void InitializeSession()
 		{
 			var clientInit = new ClientInit() { Shared = true };
 
-			Trace.TraceInformation("Sending client initialization");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Sending client initialization");
 
 			clientInit.Serialize(_Writer);
 
 			SessionInfo = ServerInit.Deserialize(_Reader);
 
-			Trace.TraceInformation("Received server initialization");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Received server initialization");
 
 			FrameBufferStateStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
 			FrameBufferState = new byte[SessionInfo.FrameBufferHeight * FrameBufferStateStride];
 
-			Trace.TraceInformation($"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
 
 			SetEncodings(_SupportedEncodings);
 
 			TaskEx.Run(
 				() =>
 				{
-					Trace.TraceInformation("Starting to listen for server messages");
+					TraceSource.TraceEvent(TraceEventType.Information, 0, "Starting to listen for server messages");
 
 					var retryCount = 0;
 
@@ -583,7 +587,7 @@ namespace MiniVNCClient
 						}
 						catch (Exception ex)
 						{
-							Trace.TraceError($"Error reading messages from server: {ex.Message}\r\n{ex.StackTrace}");
+							TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error reading messages from server: {ex.Message}\r\n{ex.StackTrace}");
 
 							retryCount = ++retryCount % 5;
 
@@ -594,14 +598,14 @@ namespace MiniVNCClient
 						}
 					}
 
-					Trace.TraceInformation("Stopped to listen for server messages");
+					TraceSource.TraceEvent(TraceEventType.Information, 0, "Stopped to listen for server messages");
 				}
 			);
 		}
 
 		private void MessageHandler(ServerToClientMessageType messageType)
 		{
-			Trace.TraceInformation($"Received message: {messageType}");
+			TraceSource.TraceEvent(TraceEventType.Verbose, (int)messageType, $"Received message: {messageType}");
 
 			switch (messageType)
 			{
@@ -663,12 +667,13 @@ namespace MiniVNCClient
 
 				var numberOfRectangles = _Reader.ReadUInt16();
 
-				Trace.TraceInformation($"Total rectangles: {numberOfRectangles}");
+				TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Total rectangles: {numberOfRectangles}");
 
 				if (numberOfRectangles > 0)
 				{
-					var newFrameBufferState = new byte[FrameBufferState.Length];
-					Buffer.BlockCopy(FrameBufferState, 0, newFrameBufferState, 0, FrameBufferState.Length);
+					byte[] newFrameBufferState = null;
+
+					var updatedAreas = new List<Int32Rect>();
 
 					for (int rectangleIndex = 0; rectangleIndex < numberOfRectangles; rectangleIndex++)
 					{
@@ -682,7 +687,30 @@ namespace MiniVNCClient
 
 						var encodingType = (VNCEncoding)_Reader.ReadInt32();
 
-						Trace.TraceInformation($"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
+						if (
+							encodingType == VNCEncoding.CopyRect
+							||
+							encodingType == VNCEncoding.ZRLE
+							||
+							encodingType == VNCEncoding.Hextile
+							||
+							encodingType == VNCEncoding.ZlibHex
+							||
+							encodingType == VNCEncoding.Zlib
+							||
+							encodingType == VNCEncoding.Raw
+						)
+						{
+							if (newFrameBufferState == null)
+							{
+								newFrameBufferState = new byte[FrameBufferState.Length];
+								Buffer.BlockCopy(FrameBufferState, 0, newFrameBufferState, 0, FrameBufferState.Length);
+							}
+
+							updatedAreas.Add(rectangle);
+						}
+
+						TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
 
 						if (encodingType == VNCEncoding.LastRect)
 						{
@@ -1120,16 +1148,21 @@ namespace MiniVNCClient
 						}
 					}
 
-					FrameBufferState = newFrameBufferState;
+					if (newFrameBufferState != null)
+					{
+						FrameBufferState = newFrameBufferState;
 
-					Trace.TraceInformation($"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
+						UpdatedAreas = updatedAreas.ToArray();
 
-					FrameBufferUpdated?.Invoke(this, new FrameBufferUpdatedEventArgs(updateStartTime, newFrameBufferState));
+						TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
+
+						FrameBufferUpdated?.Invoke(this, new FrameBufferUpdatedEventArgs(updateStartTime, updatedAreas.ToArray(), newFrameBufferState));
+					}
 				}
 			}
 			catch (Exception ex)
 			{
-				Trace.TraceError($"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
+				TraceSource.TraceEvent(TraceEventType.Error, (int)ServerToClientMessageType.FramebufferUpdate, $"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
 			}
 		}
 
@@ -1142,7 +1175,7 @@ namespace MiniVNCClient
 			if (length > 0)
 			{
 				var text = _Reader.ReadString();
-				Trace.TraceInformation($"Server cut text: \"{text}\"");
+				TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.ServerCutText, $"Server cut text: \"{text}\"");
 
 				ServerCutText?.Invoke(this, new ServerCutTextEventArgs(text));
 			}
@@ -1157,7 +1190,12 @@ namespace MiniVNCClient
 		#region Public methods
 		public bool Connect(string hostname, int port)
 		{
-			Trace.TraceInformation($"Connecting to {hostname}:{port}");
+			if (TraceSource == null)
+			{
+				TraceSource = new TraceSource("MiniVNCClient");
+			}
+
+			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Connecting to {hostname}:{port}");
 
 			try
 			{
@@ -1166,7 +1204,7 @@ namespace MiniVNCClient
 			}
 			catch (Exception ex)
 			{
-				Trace.TraceError($"Error connecting to {hostname}:{port}: {ex.Message}");
+				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error connecting to {hostname}:{port}: {ex.Message}");
 				return false;
 			}
 
@@ -1174,7 +1212,7 @@ namespace MiniVNCClient
 			_Reader = new Util.BinaryReader(_Stream);
 			_Writer = new BinaryWriter(_Stream);
 
-			Trace.TraceInformation("Connection successful, initializing session");
+			TraceSource.TraceEvent(TraceEventType.Information, 0, "Connection successful, initializing session");
 
 			return Initialize();
 		}
@@ -1183,7 +1221,7 @@ namespace MiniVNCClient
 		{
 			if (_TcpClient?.Connected ?? false)
 			{
-				Trace.TraceInformation($"Sending message {messageType}");
+				TraceSource.TraceEvent(TraceEventType.Verbose, (int)messageType, $"Sending message {messageType}");
 
 				_Writer.Write((byte)messageType);
 				_Writer.Write(content);
@@ -1279,6 +1317,16 @@ namespace MiniVNCClient
 					)
 					.ToArray()
 			);
+		}
+
+		public byte[] GetFrameBufferArea(Int32Rect area)
+		{
+			if (!Connected || FrameBufferState == null)
+			{
+				return null;
+			}
+
+			return ReadRectangle(area, FrameBufferState, FrameBufferStateStride);
 		}
 
 		public void Close()
