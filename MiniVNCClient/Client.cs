@@ -65,6 +65,7 @@ namespace MiniVNCClient
 
 		private static readonly ZRLESubencodingType[] _ZRLESubencodingTypes;
 
+		private VNCEncoding[] _EnabledEncodings;
 		private TcpClient _TcpClient;
 		private Stream _Stream;
 		private Util.BinaryReader _Reader;
@@ -92,6 +93,27 @@ namespace MiniVNCClient
 
 		#region Properties
 		public Version ClientVersion => _ClientVersion;
+
+		public VNCEncoding[] SupportedEncodings => _SupportedEncodings;
+
+		public VNCEncoding[] EnabledEncodings
+		{
+			get => _EnabledEncodings;
+			set
+			{
+				if (value == null)
+				{
+					throw new ArgumentNullException(nameof(value));
+				}
+
+				if (value.Any(v => !_EnabledEncodings.Contains(v)))
+				{
+					throw new InvalidOperationException($"{nameof(EnabledEncodings)} must be a subset of {nameof(SupportedEncodings)}");
+				}
+
+				_EnabledEncodings = value;
+			}
+		}
 
 		public bool Connected => _TcpClient?.Connected ?? false;
 
