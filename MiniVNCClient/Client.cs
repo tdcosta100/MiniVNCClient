@@ -1210,7 +1210,7 @@ namespace MiniVNCClient
 		#endregion
 
 		#region Public methods
-		public bool Connect(string hostname, int port)
+		public bool Connect(string hostname, int port = 5900)
 		{
 			if (TraceSource == null)
 			{

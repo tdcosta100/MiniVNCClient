@@ -6,17 +6,70 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace MiniVNCClient.Console
+namespace MiniVNCClient.ConsoleExample
 {
 	class Program
 	{
 		static void Main(string[] args)
 		{
-			var client = new Client();
-			client.Password = "testvnc";
+			Console.Write("Host IP/Name: ");
 
-			if (client.Connect("192.168.56.104", 5900))
+			var host = Console.ReadLine();
+
+			Console.Write("Host Port (or press enter for default 5900): ");
+
+			int port;
+			var userPort = Console.ReadLine();
+
+			if (!int.TryParse(userPort, out port))
 			{
+				port = 5900;
+			}
+
+			Console.Write("VNC Password (or press enter to connect without a password): ");
+
+			var stringBuilder = new StringBuilder();
+
+			while (true)
+			{
+				var character = Console.ReadKey(true);
+				if (character.Key == ConsoleKey.Enter)
+				{
+					Console.WriteLine();
+					break;
+				}
+
+				if (character.Key == ConsoleKey.Backspace)
+				{
+					if (stringBuilder.Length > 0)
+					{
+						Console.Write("\b\0\b");
+						stringBuilder.Length--;
+					}
+
+					continue;
+				}
+
+				Console.Write('*');
+				stringBuilder.Append(character.KeyChar);
+			}
+
+			var password = stringBuilder.ToString();
+
+			var client = new Client();
+
+			if (!string.IsNullOrEmpty(password))
+			{
+				client.Password = password;
+			}
+
+			if (client.Connect(host, port))
+			{
+				if (!Directory.Exists("Images"))
+				{
+					Directory.CreateDirectory("Images");
+				}
+
 				client.FrameBufferUpdated += (sender, e) =>
 				{
 					Task.Run(() =>
@@ -65,8 +118,6 @@ namespace MiniVNCClient.Console
 				Task.Delay(TimeSpan.FromMinutes(1)).Wait();
 
 				client.Close();
-
-				Task.Delay(TimeSpan.FromSeconds(10)).Wait();
 			}
 		}
 	}

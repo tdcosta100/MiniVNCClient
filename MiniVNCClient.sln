@@ -5,7 +5,9 @@ VisualStudioVersion = 16.0.29306.81
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient", "MiniVNCClient\MiniVNCClient.csproj", "{D4A2B295-18F4-434C-BB5C-BC6C57E6FEF0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient.Console", "MiniVNCClient.Console\MiniVNCClient.Console.csproj", "{0C94F8BC-D507-47D6-94E6-510358BCAF2E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient.ConsoleExample", "MiniVNCClient.Console\MiniVNCClient.ConsoleExample.csproj", "{0C94F8BC-D507-47D6-94E6-510358BCAF2E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MiniVNCClient.WPFExample", "MiniVNCClient.WPFExample\MiniVNCClient.WPFExample.csproj", "{0B7629ED-7D7A-4EB7-9D74-A5013F100CA1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -21,6 +23,10 @@ Global
 		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{0C94F8BC-D507-47D6-94E6-510358BCAF2E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B7629ED-7D7A-4EB7-9D74-A5013F100CA1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B7629ED-7D7A-4EB7-9D74-A5013F100CA1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B7629ED-7D7A-4EB7-9D74-A5013F100CA1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B7629ED-7D7A-4EB7-9D74-A5013F100CA1}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

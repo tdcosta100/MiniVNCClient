@@ -1,0 +1,25 @@
+﻿<Window x:Class="MiniVNCClient.WPFExample.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:MiniVNCClient.WPFExample"
+        mc:Ignorable="d"
+        Name="mainWindow"
+        Title="MainWindow" Height="450" Width="800" SizeToContent="WidthAndHeight">
+    <StackPanel>
+        <StackPanel x:Name="stackPanelConnectionDetails" Orientation="Horizontal">
+            <Label Margin="5" Content="Host"/>
+            <TextBox x:Name="textBoxHost" Margin="5" Width="200" Text="{Binding ElementName=mainWindow, Path=Host}" />
+            <Label Margin="5" Content="Port"/>
+            <TextBox x:Name="textBoxPort" Margin="5" Width="50" Text="{Binding ElementName=mainWindow, Path=Port}" />
+            <Label Margin="5" Content="Password"/>
+            <PasswordBox x:Name="textBoxPassword" Margin="5" Width="100" PasswordChanged="TextBoxPassword_PasswordChanged" />
+            <Button Margin="5" Width="100" Content="Connect" Click="ButtonConnect_Click" />
+            <Label x:Name="labelStatus" Margin="5" Width="130"/>
+        </StackPanel>
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <Image x:Name="remoteFrameBuffer"/>
+        </ScrollViewer>
+    </StackPanel>
+</Window>
