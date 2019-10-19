@@ -11,6 +11,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 
@@ -79,6 +80,9 @@ namespace MiniVNCClient
 		private BinaryWriter _MemoryStreamCompressedWriter2 = null;
 		private DeflateStream _DeflateStream2 = null;
 		private Util.BinaryReader _DeflateStreamReader2 = null;
+
+		private TaskCompletionSource<object> _DelayTask;
+		private Timer _DelayTimer;
 		#endregion
 
 		#region Events
@@ -145,184 +149,184 @@ namespace MiniVNCClient
 		{
 			_SecurityTypes = new RangeCollection<int, SecurityType?>()
 			{
-				(0, 0, SecurityType.Invalid),
-				(1, 1, SecurityType.None),
-				(2, 2, SecurityType.VNCAuthentication),
-				(3, 4, SecurityType.RealVNC),
-				(5, 5, SecurityType.RA2),
-				(6, 6, SecurityType.RA2ne),
-				(7, 15, SecurityType.RealVNC),
-				(16, 16, SecurityType.Tight),
-				(17, 17, SecurityType.Ultra),
-				(18, 18, SecurityType.TLS),
-				(19, 19, SecurityType.VeNCrypt),
-				(20, 20, SecurityType.SASL),
-				(21, 21, SecurityType.MD5),
-				(22, 22, SecurityType.xvp),
-				(23, 23, SecurityType.SecureTunnel),
-				(24, 24, SecurityType.IntegratedSSH),
-				(30, 35, SecurityType.Apple),
-				(128, 255, SecurityType.RealVNC)
+				new Range<int, SecurityType?>(0, 0, SecurityType.Invalid),
+				new Range<int, SecurityType?>(1, 1, SecurityType.None),
+				new Range<int, SecurityType?>(2, 2, SecurityType.VNCAuthentication),
+				new Range<int, SecurityType?>(3, 4, SecurityType.RealVNC),
+				new Range<int, SecurityType?>(5, 5, SecurityType.RA2),
+				new Range<int, SecurityType?>(6, 6, SecurityType.RA2ne),
+				new Range<int, SecurityType?>(7, 15, SecurityType.RealVNC),
+				new Range<int, SecurityType?>(16, 16, SecurityType.Tight),
+				new Range<int, SecurityType?>(17, 17, SecurityType.Ultra),
+				new Range<int, SecurityType?>(18, 18, SecurityType.TLS),
+				new Range<int, SecurityType?>(19, 19, SecurityType.VeNCrypt),
+				new Range<int, SecurityType?>(20, 20, SecurityType.SASL),
+				new Range<int, SecurityType?>(21, 21, SecurityType.MD5),
+				new Range<int, SecurityType?>(22, 22, SecurityType.xvp),
+				new Range<int, SecurityType?>(23, 23, SecurityType.SecureTunnel),
+				new Range<int, SecurityType?>(24, 24, SecurityType.IntegratedSSH),
+				new Range<int, SecurityType?>(30, 35, SecurityType.Apple),
+				new Range<int, SecurityType?>(128, 255, SecurityType.RealVNC)
 			};
 
 			_Encodings = new RangeCollection<int, VNCEncoding?>()
 			{
-				(0, 0, VNCEncoding.Raw),
-				(1, 1, VNCEncoding.CopyRect),
-				(2, 2, VNCEncoding.RRE),
-				(5, 5, VNCEncoding.Hextile),
-				(6, 6, VNCEncoding.Zlib),
-				(7, 7, VNCEncoding.Tight),
-				(8, 8, VNCEncoding.ZlibHex),
-				(9, 9, VNCEncoding.Ultra),
-				(10, 10, VNCEncoding.Ultra2),
-				(15, 15, VNCEncoding.TRLE),
-				(16, 16, VNCEncoding.ZRLE),
-				(17, 17, VNCEncoding.HitachiZYWRLE),
-				(20, 20, VNCEncoding.H264),
-				(21, 21, VNCEncoding.JPEG),
-				(22, 22, VNCEncoding.JRLE),
-				(1000, 1002, VNCEncoding.Apple),
-				(1011, 1011, VNCEncoding.Apple),
-				(1100, 1105, VNCEncoding.Apple),
-				(1024, 1099, VNCEncoding.RealVNC),
+				new Range<int, VNCEncoding?>(0, 0, VNCEncoding.Raw),
+				new Range<int, VNCEncoding?>(1, 1, VNCEncoding.CopyRect),
+				new Range<int, VNCEncoding?>(2, 2, VNCEncoding.RRE),
+				new Range<int, VNCEncoding?>(5, 5, VNCEncoding.Hextile),
+				new Range<int, VNCEncoding?>(6, 6, VNCEncoding.Zlib),
+				new Range<int, VNCEncoding?>(7, 7, VNCEncoding.Tight),
+				new Range<int, VNCEncoding?>(8, 8, VNCEncoding.ZlibHex),
+				new Range<int, VNCEncoding?>(9, 9, VNCEncoding.Ultra),
+				new Range<int, VNCEncoding?>(10, 10, VNCEncoding.Ultra2),
+				new Range<int, VNCEncoding?>(15, 15, VNCEncoding.TRLE),
+				new Range<int, VNCEncoding?>(16, 16, VNCEncoding.ZRLE),
+				new Range<int, VNCEncoding?>(17, 17, VNCEncoding.HitachiZYWRLE),
+				new Range<int, VNCEncoding?>(20, 20, VNCEncoding.H264),
+				new Range<int, VNCEncoding?>(21, 21, VNCEncoding.JPEG),
+				new Range<int, VNCEncoding?>(22, 22, VNCEncoding.JRLE),
+				new Range<int, VNCEncoding?>(1000, 1002, VNCEncoding.Apple),
+				new Range<int, VNCEncoding?>(1011, 1011, VNCEncoding.Apple),
+				new Range<int, VNCEncoding?>(1100, 1105, VNCEncoding.Apple),
+				new Range<int, VNCEncoding?>(1024, 1099, VNCEncoding.RealVNC),
 
-				(unchecked((int)0xc0a1e5cf), unchecked((int)0xc0a1e5cf), VNCEncoding.PluginStreaming),
-				(unchecked((int)0xfffe0000), unchecked((int)0xfffe0000), VNCEncoding.KeyboardLedState),
-				(unchecked((int)0xfffe0001), unchecked((int)0xfffe0001), VNCEncoding.SupportedMessages),
-				(unchecked((int)0xfffe0002), unchecked((int)0xfffe0002), VNCEncoding.SupportedEncodings),
-				(unchecked((int)0xfffe0003), unchecked((int)0xfffe0003), VNCEncoding.ServerIdentity),
-				(unchecked((int)0xfffe0004), unchecked((int)0xfffe00ff), VNCEncoding.libVNCServer),
-				(unchecked((int)0xffff0000), unchecked((int)0xffff0000), VNCEncoding.Cache),
-				(unchecked((int)0xffff0001), unchecked((int)0xffff0001), VNCEncoding.CacheEnable),
-				(unchecked((int)0xffff0002), unchecked((int)0xffff0002), VNCEncoding.XORZlib),
-				(unchecked((int)0xffff0003), unchecked((int)0xffff0003), VNCEncoding.XORMonoRectZlib),
-				(unchecked((int)0xffff0004), unchecked((int)0xffff0004), VNCEncoding.XORMultiColorZlib),
-				(unchecked((int)0xffff0005), unchecked((int)0xffff0005), VNCEncoding.SolidColor),
-				(unchecked((int)0xffff0006), unchecked((int)0xffff0006), VNCEncoding.XOREnable),
-				(unchecked((int)0xffff0007), unchecked((int)0xffff0007), VNCEncoding.CacheZip),
-				(unchecked((int)0xffff0008), unchecked((int)0xffff0008), VNCEncoding.SolMonoZip),
-				(unchecked((int)0xffff0009), unchecked((int)0xffff0009), VNCEncoding.UltraZip),
-				(unchecked((int)0xffff8000), unchecked((int)0xffff8000), VNCEncoding.ServerState),
-				(unchecked((int)0xffff8001), unchecked((int)0xffff8001), VNCEncoding.EnableKeepAlive),
-				(unchecked((int)0xffff8002), unchecked((int)0xffff8002), VNCEncoding.FTProtocolVersion),
-				(unchecked((int)0xffff8003), unchecked((int)0xffff8003), VNCEncoding.Session),
+				new Range<int, VNCEncoding?>(unchecked((int)0xc0a1e5cf), unchecked((int)0xc0a1e5cf), VNCEncoding.PluginStreaming),
+				new Range<int, VNCEncoding?>(unchecked((int)0xfffe0000), unchecked((int)0xfffe0000), VNCEncoding.KeyboardLedState),
+				new Range<int, VNCEncoding?>(unchecked((int)0xfffe0001), unchecked((int)0xfffe0001), VNCEncoding.SupportedMessages),
+				new Range<int, VNCEncoding?>(unchecked((int)0xfffe0002), unchecked((int)0xfffe0002), VNCEncoding.SupportedEncodings),
+				new Range<int, VNCEncoding?>(unchecked((int)0xfffe0003), unchecked((int)0xfffe0003), VNCEncoding.ServerIdentity),
+				new Range<int, VNCEncoding?>(unchecked((int)0xfffe0004), unchecked((int)0xfffe00ff), VNCEncoding.libVNCServer),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0000), unchecked((int)0xffff0000), VNCEncoding.Cache),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0001), unchecked((int)0xffff0001), VNCEncoding.CacheEnable),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0002), unchecked((int)0xffff0002), VNCEncoding.XORZlib),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0003), unchecked((int)0xffff0003), VNCEncoding.XORMonoRectZlib),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0004), unchecked((int)0xffff0004), VNCEncoding.XORMultiColorZlib),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0005), unchecked((int)0xffff0005), VNCEncoding.SolidColor),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0006), unchecked((int)0xffff0006), VNCEncoding.XOREnable),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0007), unchecked((int)0xffff0007), VNCEncoding.CacheZip),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0008), unchecked((int)0xffff0008), VNCEncoding.SolMonoZip),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff0009), unchecked((int)0xffff0009), VNCEncoding.UltraZip),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff8000), unchecked((int)0xffff8000), VNCEncoding.ServerState),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff8001), unchecked((int)0xffff8001), VNCEncoding.EnableKeepAlive),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff8002), unchecked((int)0xffff8002), VNCEncoding.FTProtocolVersion),
+				new Range<int, VNCEncoding?>(unchecked((int)0xffff8003), unchecked((int)0xffff8003), VNCEncoding.Session),
 
-				(-1, -22, VNCEncoding.TightOptions),
-				(-23, -32, VNCEncoding.JPEGQualityLevel),
-				(-260, -260, VNCEncoding.TightPNG),
-				(-219, -222, VNCEncoding.libVNCServer),
-				(-223, -223, VNCEncoding.DesktopSize),
-				(-224, -224, VNCEncoding.LastRect),
-				(-225, -225, VNCEncoding.PointerPos),
-				(-239, -239, VNCEncoding.Cursor),
-				(-240, -240, VNCEncoding.XCursor),
-				(-247, -256, VNCEncoding.CompressionLevel),
-				(-257, -257, VNCEncoding.QEMUPointerMotionChange),
-				(-258, -258, VNCEncoding.QEMUExtendedKeyEvent),
-				(-259, -259, VNCEncoding.QEMUAudio),
-				(-261, -261, VNCEncoding.LEDState),
-				(-262, -272, VNCEncoding.QEMU),
-				(-273, -304, VNCEncoding.VMware),
-				(-305, -305, VNCEncoding.gii),
-				(-306, -306, VNCEncoding.popa),
-				(-307, -307, VNCEncoding.DesktopName),
-				(-308, -308, VNCEncoding.ExtendedDesktopSize),
-				(-309, -309, VNCEncoding.xvp),
-				(-310, -310, VNCEncoding.OLIVECallControl),
-				(-311, -311, VNCEncoding.ClientRedirect),
-				(-312, -312, VNCEncoding.Fence),
-				(-313, -313, VNCEncoding.ContinuousUpdates),
-				(-314, -314, VNCEncoding.CursorWithAlpha),
-				(-412, -512, VNCEncoding.JPEGFineGrainedQualityLevel),
-				(-523, -528, VNCEncoding.CarConnectivity),
-				(-763, -768, VNCEncoding.JPEGSubsamplingLevel),
+				new Range<int, VNCEncoding?>(-1, -22, VNCEncoding.TightOptions),
+				new Range<int, VNCEncoding?>(-23, -32, VNCEncoding.JPEGQualityLevel),
+				new Range<int, VNCEncoding?>(-260, -260, VNCEncoding.TightPNG),
+				new Range<int, VNCEncoding?>(-219, -222, VNCEncoding.libVNCServer),
+				new Range<int, VNCEncoding?>(-223, -223, VNCEncoding.DesktopSize),
+				new Range<int, VNCEncoding?>(-224, -224, VNCEncoding.LastRect),
+				new Range<int, VNCEncoding?>(-225, -225, VNCEncoding.PointerPos),
+				new Range<int, VNCEncoding?>(-239, -239, VNCEncoding.Cursor),
+				new Range<int, VNCEncoding?>(-240, -240, VNCEncoding.XCursor),
+				new Range<int, VNCEncoding?>(-247, -256, VNCEncoding.CompressionLevel),
+				new Range<int, VNCEncoding?>(-257, -257, VNCEncoding.QEMUPointerMotionChange),
+				new Range<int, VNCEncoding?>(-258, -258, VNCEncoding.QEMUExtendedKeyEvent),
+				new Range<int, VNCEncoding?>(-259, -259, VNCEncoding.QEMUAudio),
+				new Range<int, VNCEncoding?>(-261, -261, VNCEncoding.LEDState),
+				new Range<int, VNCEncoding?>(-262, -272, VNCEncoding.QEMU),
+				new Range<int, VNCEncoding?>(-273, -304, VNCEncoding.VMware),
+				new Range<int, VNCEncoding?>(-305, -305, VNCEncoding.gii),
+				new Range<int, VNCEncoding?>(-306, -306, VNCEncoding.popa),
+				new Range<int, VNCEncoding?>(-307, -307, VNCEncoding.DesktopName),
+				new Range<int, VNCEncoding?>(-308, -308, VNCEncoding.ExtendedDesktopSize),
+				new Range<int, VNCEncoding?>(-309, -309, VNCEncoding.xvp),
+				new Range<int, VNCEncoding?>(-310, -310, VNCEncoding.OLIVECallControl),
+				new Range<int, VNCEncoding?>(-311, -311, VNCEncoding.ClientRedirect),
+				new Range<int, VNCEncoding?>(-312, -312, VNCEncoding.Fence),
+				new Range<int, VNCEncoding?>(-313, -313, VNCEncoding.ContinuousUpdates),
+				new Range<int, VNCEncoding?>(-314, -314, VNCEncoding.CursorWithAlpha),
+				new Range<int, VNCEncoding?>(-412, -512, VNCEncoding.JPEGFineGrainedQualityLevel),
+				new Range<int, VNCEncoding?>(-523, -528, VNCEncoding.CarConnectivity),
+				new Range<int, VNCEncoding?>(-763, -768, VNCEncoding.JPEGSubsamplingLevel),
 
-				(unchecked((int)0x48323634), unchecked((int)0x48323634), VNCEncoding.VAH264),
-				(unchecked((int)0x574d5600), unchecked((int)0x574d5663), VNCEncoding.VMware),
-				(unchecked((int)0x574d5664), unchecked((int)0x574d5664), VNCEncoding.VMwareCursor),
-				(unchecked((int)0x574d5665), unchecked((int)0x574d5665), VNCEncoding.VMwareCursorState),
-				(unchecked((int)0x574d5666), unchecked((int)0x574d5666), VNCEncoding.VMwareCursorPosition),
-				(unchecked((int)0x574d5667), unchecked((int)0x574d5667), VNCEncoding.VMwareKeyRepeat),
-				(unchecked((int)0x574d5668), unchecked((int)0x574d5668), VNCEncoding.VMwareLEDstate),
-				(unchecked((int)0x574d5669), unchecked((int)0x574d5669), VNCEncoding.VMwareDisplayModeChange),
-				(unchecked((int)0x574d566a), unchecked((int)0x574d566a), VNCEncoding.VMwareVirtualMachineState),
-				(unchecked((int)0x574d566b), unchecked((int)0x574d56ff), VNCEncoding.VMware),
-				(unchecked((int)0xc0a1e5ce), unchecked((int)0xc0a1e5ce), VNCEncoding.ExtendedClipboard)
+				new Range<int, VNCEncoding?>(unchecked((int)0x48323634), unchecked((int)0x48323634), VNCEncoding.VAH264),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5600), unchecked((int)0x574d5663), VNCEncoding.VMware),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5664), unchecked((int)0x574d5664), VNCEncoding.VMwareCursor),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5665), unchecked((int)0x574d5665), VNCEncoding.VMwareCursorState),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5666), unchecked((int)0x574d5666), VNCEncoding.VMwareCursorPosition),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5667), unchecked((int)0x574d5667), VNCEncoding.VMwareKeyRepeat),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5668), unchecked((int)0x574d5668), VNCEncoding.VMwareLEDstate),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d5669), unchecked((int)0x574d5669), VNCEncoding.VMwareDisplayModeChange),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d566a), unchecked((int)0x574d566a), VNCEncoding.VMwareVirtualMachineState),
+				new Range<int, VNCEncoding?>(unchecked((int)0x574d566b), unchecked((int)0x574d56ff), VNCEncoding.VMware),
+				new Range<int, VNCEncoding?>(unchecked((int)0xc0a1e5ce), unchecked((int)0xc0a1e5ce), VNCEncoding.ExtendedClipboard)
 			};
 
 			_ClientToServerMessageTypes = new RangeCollection<int, ClientToServerMessageType?>()
 			{
-				(0, 0, ClientToServerMessageType.SetPixelFormat),
-				(2, 2, ClientToServerMessageType.SetEncodings),
-				(3, 3, ClientToServerMessageType.FramebufferUpdateRequest),
-				(4, 4, ClientToServerMessageType.KeyEvent),
-				(5, 5, ClientToServerMessageType.PointerEvent),
-				(6, 6, ClientToServerMessageType.ClientCutText),
-				(7, 7, ClientToServerMessageType.FileTransfer),
-				(8, 8, ClientToServerMessageType.SetScale),
-				(9, 9, ClientToServerMessageType.SetServerInput),
-				(10, 10, ClientToServerMessageType.SetSW),
-				(11, 11, ClientToServerMessageType.TextChat),
-				(12, 12, ClientToServerMessageType.KeyFrameRequest),
-				(13, 13, ClientToServerMessageType.KeepAlive),
-				(14, 14, ClientToServerMessageType.UltraVNC),
-				(15, 15, ClientToServerMessageType.SetScaleFactor),
-				(16, 19, ClientToServerMessageType.UltraVNC),
-				(20, 20, ClientToServerMessageType.RequestSession),
-				(21, 21, ClientToServerMessageType.SetSession),
-				(80, 80, ClientToServerMessageType.NotifyPluginStreaming),
-				(127, 127, ClientToServerMessageType.VMware),
-				(128, 128, ClientToServerMessageType.CarConnectivity),
-				(150, 150, ClientToServerMessageType.EnableContinuousUpdates),
-				(248, 248, ClientToServerMessageType.ClientFence),
-				(249, 249, ClientToServerMessageType.OLIVECallControl),
-				(250, 250, ClientToServerMessageType.xvpClientMessage),
-				(251, 251, ClientToServerMessageType.SetDesktopSize),
-				(252, 252, ClientToServerMessageType.Tight),
-				(253, 253, ClientToServerMessageType.giiClientMessage),
-				(254, 254, ClientToServerMessageType.VMware),
-				(255, 255, ClientToServerMessageType.QEMUClientMessage)
+				new Range<int, ClientToServerMessageType?>(0, 0, ClientToServerMessageType.SetPixelFormat),
+				new Range<int, ClientToServerMessageType?>(2, 2, ClientToServerMessageType.SetEncodings),
+				new Range<int, ClientToServerMessageType?>(3, 3, ClientToServerMessageType.FramebufferUpdateRequest),
+				new Range<int, ClientToServerMessageType?>(4, 4, ClientToServerMessageType.KeyEvent),
+				new Range<int, ClientToServerMessageType?>(5, 5, ClientToServerMessageType.PointerEvent),
+				new Range<int, ClientToServerMessageType?>(6, 6, ClientToServerMessageType.ClientCutText),
+				new Range<int, ClientToServerMessageType?>(7, 7, ClientToServerMessageType.FileTransfer),
+				new Range<int, ClientToServerMessageType?>(8, 8, ClientToServerMessageType.SetScale),
+				new Range<int, ClientToServerMessageType?>(9, 9, ClientToServerMessageType.SetServerInput),
+				new Range<int, ClientToServerMessageType?>(10, 10, ClientToServerMessageType.SetSW),
+				new Range<int, ClientToServerMessageType?>(11, 11, ClientToServerMessageType.TextChat),
+				new Range<int, ClientToServerMessageType?>(12, 12, ClientToServerMessageType.KeyFrameRequest),
+				new Range<int, ClientToServerMessageType?>(13, 13, ClientToServerMessageType.KeepAlive),
+				new Range<int, ClientToServerMessageType?>(14, 14, ClientToServerMessageType.UltraVNC),
+				new Range<int, ClientToServerMessageType?>(15, 15, ClientToServerMessageType.SetScaleFactor),
+				new Range<int, ClientToServerMessageType?>(16, 19, ClientToServerMessageType.UltraVNC),
+				new Range<int, ClientToServerMessageType?>(20, 20, ClientToServerMessageType.RequestSession),
+				new Range<int, ClientToServerMessageType?>(21, 21, ClientToServerMessageType.SetSession),
+				new Range<int, ClientToServerMessageType?>(80, 80, ClientToServerMessageType.NotifyPluginStreaming),
+				new Range<int, ClientToServerMessageType?>(127, 127, ClientToServerMessageType.VMware),
+				new Range<int, ClientToServerMessageType?>(128, 128, ClientToServerMessageType.CarConnectivity),
+				new Range<int, ClientToServerMessageType?>(150, 150, ClientToServerMessageType.EnableContinuousUpdates),
+				new Range<int, ClientToServerMessageType?>(248, 248, ClientToServerMessageType.ClientFence),
+				new Range<int, ClientToServerMessageType?>(249, 249, ClientToServerMessageType.OLIVECallControl),
+				new Range<int, ClientToServerMessageType?>(250, 250, ClientToServerMessageType.xvpClientMessage),
+				new Range<int, ClientToServerMessageType?>(251, 251, ClientToServerMessageType.SetDesktopSize),
+				new Range<int, ClientToServerMessageType?>(252, 252, ClientToServerMessageType.Tight),
+				new Range<int, ClientToServerMessageType?>(253, 253, ClientToServerMessageType.giiClientMessage),
+				new Range<int, ClientToServerMessageType?>(254, 254, ClientToServerMessageType.VMware),
+				new Range<int, ClientToServerMessageType?>(255, 255, ClientToServerMessageType.QEMUClientMessage)
 			};
 
 			_ServerToClientMessageTypes = new RangeCollection<int, ServerToClientMessageType?>()
 			{
-				(0, 0, ServerToClientMessageType.FramebufferUpdate),
-				(1, 1, ServerToClientMessageType.SetColourMapEntries),
-				(2, 2, ServerToClientMessageType.Bell),
-				(3, 3, ServerToClientMessageType.ServerCutText),
-				(4, 4, ServerToClientMessageType.ResizeFrameBuffer),
-				(5, 5, ServerToClientMessageType.KeyFrameUpdate),
-				(6, 6, ServerToClientMessageType.UltraVNC),
-				(7, 7, ServerToClientMessageType.FileTransfer),
-				(8, 10, ServerToClientMessageType.UltraVNC),
-				(11, 11, ServerToClientMessageType.TextChat),
-				(12, 12, ServerToClientMessageType.UltraVNC),
-				(13, 13, ServerToClientMessageType.KeepAlive),
-				(14, 14, ServerToClientMessageType.UltraVNC),
-				(15, 15, ServerToClientMessageType.ResizeFrameBuffer),
-				(127, 127, ServerToClientMessageType.VMware),
-				(128, 128, ServerToClientMessageType.CarConnectivity),
-				(150, 150, ServerToClientMessageType.EndOfContinuousUpdates),
-				(173, 173, ServerToClientMessageType.ServerState),
-				(248, 248, ServerToClientMessageType.ServerFence),
-				(249, 249, ServerToClientMessageType.OLIVECallControl),
-				(250, 250, ServerToClientMessageType.xvpServerMessage),
-				(252, 252, ServerToClientMessageType.Tight),
-				(253, 253, ServerToClientMessageType.giiServerMessage),
-				(254, 254, ServerToClientMessageType.VMware),
-				(255, 255, ServerToClientMessageType.QEMUServerMessage)
+				new Range<int, ServerToClientMessageType?>(0, 0, ServerToClientMessageType.FramebufferUpdate),
+				new Range<int, ServerToClientMessageType?>(1, 1, ServerToClientMessageType.SetColourMapEntries),
+				new Range<int, ServerToClientMessageType?>(2, 2, ServerToClientMessageType.Bell),
+				new Range<int, ServerToClientMessageType?>(3, 3, ServerToClientMessageType.ServerCutText),
+				new Range<int, ServerToClientMessageType?>(4, 4, ServerToClientMessageType.ResizeFrameBuffer),
+				new Range<int, ServerToClientMessageType?>(5, 5, ServerToClientMessageType.KeyFrameUpdate),
+				new Range<int, ServerToClientMessageType?>(6, 6, ServerToClientMessageType.UltraVNC),
+				new Range<int, ServerToClientMessageType?>(7, 7, ServerToClientMessageType.FileTransfer),
+				new Range<int, ServerToClientMessageType?>(8, 10, ServerToClientMessageType.UltraVNC),
+				new Range<int, ServerToClientMessageType?>(11, 11, ServerToClientMessageType.TextChat),
+				new Range<int, ServerToClientMessageType?>(12, 12, ServerToClientMessageType.UltraVNC),
+				new Range<int, ServerToClientMessageType?>(13, 13, ServerToClientMessageType.KeepAlive),
+				new Range<int, ServerToClientMessageType?>(14, 14, ServerToClientMessageType.UltraVNC),
+				new Range<int, ServerToClientMessageType?>(15, 15, ServerToClientMessageType.ResizeFrameBuffer),
+				new Range<int, ServerToClientMessageType?>(127, 127, ServerToClientMessageType.VMware),
+				new Range<int, ServerToClientMessageType?>(128, 128, ServerToClientMessageType.CarConnectivity),
+				new Range<int, ServerToClientMessageType?>(150, 150, ServerToClientMessageType.EndOfContinuousUpdates),
+				new Range<int, ServerToClientMessageType?>(173, 173, ServerToClientMessageType.ServerState),
+				new Range<int, ServerToClientMessageType?>(248, 248, ServerToClientMessageType.ServerFence),
+				new Range<int, ServerToClientMessageType?>(249, 249, ServerToClientMessageType.OLIVECallControl),
+				new Range<int, ServerToClientMessageType?>(250, 250, ServerToClientMessageType.xvpServerMessage),
+				new Range<int, ServerToClientMessageType?>(252, 252, ServerToClientMessageType.Tight),
+				new Range<int, ServerToClientMessageType?>(253, 253, ServerToClientMessageType.giiServerMessage),
+				new Range<int, ServerToClientMessageType?>(254, 254, ServerToClientMessageType.VMware),
+				new Range<int, ServerToClientMessageType?>(255, 255, ServerToClientMessageType.QEMUServerMessage)
 			};
 
 			var zRLESubencodingTypes = new RangeCollection<int, ZRLESubencodingType>()
 			{
-				(0, 0, ZRLESubencodingType.Raw),
-				(1, 1, ZRLESubencodingType.SolidColor),
-				(2, 16, ZRLESubencodingType.PackedPalette),
-				(17, 127, ZRLESubencodingType.Unused),
-				(128, 128, ZRLESubencodingType.PlainRLE),
-				(129, 129, ZRLESubencodingType.Unused),
-				(130, 255, ZRLESubencodingType.PaletteRLE)
+				new Range<int, ZRLESubencodingType>(0, 0, ZRLESubencodingType.Raw),
+				new Range<int, ZRLESubencodingType>(1, 1, ZRLESubencodingType.SolidColor),
+				new Range<int, ZRLESubencodingType>(2, 16, ZRLESubencodingType.PackedPalette),
+				new Range<int, ZRLESubencodingType>(17, 127, ZRLESubencodingType.Unused),
+				new Range<int, ZRLESubencodingType>(128, 128, ZRLESubencodingType.PlainRLE),
+				new Range<int, ZRLESubencodingType>(129, 129, ZRLESubencodingType.Unused),
+				new Range<int, ZRLESubencodingType>(130, 255, ZRLESubencodingType.PaletteRLE)
 			};
 
 			_ZRLESubencodingTypes =
@@ -333,10 +337,28 @@ namespace MiniVNCClient
 
 		public Client()
 		{
+			_DelayTimer = new Timer(_ => _DelayTask.SetResult(null));
 		}
 		#endregion
 
 		#region Private methods
+		private Task Delay(long delay)
+		{
+			_DelayTask = new TaskCompletionSource<object>();
+			_DelayTimer.Change(delay, Timeout.Infinite);
+			return _DelayTask.Task;
+		}
+
+		private Task Delay(int delay)
+		{
+			return Delay(delay);
+		}
+
+		private Task Delay(TimeSpan delay)
+		{
+			return Delay((long)delay.TotalMilliseconds);
+		}
+
 		private byte[] FillRectangle(int width, int height, byte[] data)
 		{
 			var rectangleData = new byte[width * height * data.Length];
@@ -594,7 +616,7 @@ namespace MiniVNCClient
 
 			SetEncodings(_SupportedEncodings);
 
-			TaskEx.Run(
+			Task.Factory.StartNew(
 				() =>
 				{
 					TraceSource.TraceEvent(TraceEventType.Information, 0, "Starting to listen for server messages");
@@ -615,13 +637,16 @@ namespace MiniVNCClient
 
 							if (retryCount == 0)
 							{
-								TaskEx.Delay(TimeSpan.FromMilliseconds(100)).Wait();
+								Delay(TimeSpan.FromMilliseconds(100)).Wait();
 							}
 						}
 					}
 
 					TraceSource.TraceEvent(TraceEventType.Information, 0, "Stopped to listen for server messages");
-				}
+				},
+				CancellationToken.None,
+				TaskCreationOptions.None,
+				TaskScheduler.Default
 			);
 		}
 
@@ -1371,6 +1396,9 @@ namespace MiniVNCClient
 			_DeflateStreamReader?.Dispose();
 			_DeflateStreamReader2?.Dispose();
 
+			_DelayTask.SetResult(null);
+			_DelayTimer.Dispose();
+
 			_TcpClient = null;
 
 			_Stream = null;
@@ -1383,6 +1411,9 @@ namespace MiniVNCClient
 			_Writer = null;
 			_DeflateStreamReader = null;
 			_DeflateStreamReader2 = null;
+
+			_DelayTask = null;
+			_DelayTimer = null;
 
 			ServerVersion = null;
 			SessionInfo = default;
