@@ -73,8 +73,5 @@
     <Compile Include="Util\NativeWrappers\Kernel32.cs" />
     <Compile Include="Util\Serializer.cs" />
   </ItemGroup>
-  <ItemGroup>
-    <None Include="app.config" />
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
