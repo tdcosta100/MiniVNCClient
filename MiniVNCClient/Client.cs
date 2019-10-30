@@ -1396,8 +1396,8 @@ namespace MiniVNCClient
 			_DeflateStreamReader?.Dispose();
 			_DeflateStreamReader2?.Dispose();
 
-			_DelayTask.SetResult(null);
-			_DelayTimer.Dispose();
+			_DelayTask?.SetResult(null);
+			_DelayTimer?.Dispose();
 
 			_TcpClient = null;
 
