@@ -79,21 +79,33 @@ namespace MiniVNCClient.WPFExample
 
 				if (_Client.Connect(_Host, _Port))
 				{
+					_Client.FrameBufferUpdated += Client_FrameBufferUpdated;
+
+					_Client.FramebufferUpdateRequest(false, 0, 0, _Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight);
+
 					Dispatcher.Invoke(new Action(() =>
 					{
 						stackPanelConnectionDetails.Visibility = Visibility.Collapsed;
 
-						_WriteableBitmap = new WriteableBitmap(_Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight, 96, 96, PixelFormats.Bgr32, null);
+						if (_Client.SessionInfo.PixelFormat.TrueColorFlag != 0x00)
+						{
+							_WriteableBitmap = new WriteableBitmap(_Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight, 96, 96, PixelFormats.Bgr32, null);
+						}
+						else
+						{
+							do
+							{
+								Task.Delay(TimeSpan.FromMilliseconds(100)).Wait();
+							} while (_Client.ColorPalette == null);
+
+							_WriteableBitmap = new WriteableBitmap(_Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight, 96, 96, PixelFormats.Indexed8, new BitmapPalette(_Client.ColorPalette));
+						}
 
 						remoteFrameBuffer.Width = _WriteableBitmap.Width;
 						remoteFrameBuffer.Height = _WriteableBitmap.Height;
 
 						remoteFrameBuffer.Source = _WriteableBitmap;
 					}));
-
-					_Client.FrameBufferUpdated += Client_FrameBufferUpdated;
-
-					_Client.FramebufferUpdateRequest(false, 0, 0, _Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight);
 
 					Task.Run(() =>
 					{

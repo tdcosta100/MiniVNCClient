@@ -125,6 +125,8 @@ namespace MiniVNCClient
 
 		public ServerInit SessionInfo { get; private set; }
 
+		public System.Windows.Media.Color[] ColorPalette { get; private set; }
+
 		public string Password { get; set; }
 
 		public Int32Rect[] UpdatedAreas { get; private set; }
@@ -660,6 +662,7 @@ namespace MiniVNCClient
 					FramebufferUpdateHandler();
 					break;
 				case ServerToClientMessageType.SetColourMapEntries:
+					SetColourMapEntriesHandler();
 					break;
 				case ServerToClientMessageType.Bell:
 					BellHandler();
@@ -1210,6 +1213,26 @@ namespace MiniVNCClient
 			catch (Exception ex)
 			{
 				TraceSource.TraceEvent(TraceEventType.Error, (int)ServerToClientMessageType.FramebufferUpdate, $"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
+			}
+		}
+
+		private void SetColourMapEntriesHandler()
+		{
+			var padding = _Reader.ReadByte();
+
+			var firstColour = _Reader.ReadInt16();
+
+			var numberOfColours = _Reader.ReadInt16();
+
+			ColorPalette = new System.Windows.Media.Color[numberOfColours];
+
+			for (int colorIndex = 0; colorIndex < numberOfColours; colorIndex++)
+			{
+				var red = _Reader.ReadBytes(2);
+				var green = _Reader.ReadBytes(2);
+				var blue = _Reader.ReadBytes(2);
+
+				ColorPalette[colorIndex] = System.Windows.Media.Color.FromRgb(red[1], green[1], blue[1]);
 			}
 		}
 
