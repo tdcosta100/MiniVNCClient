@@ -1224,7 +1224,7 @@ namespace MiniVNCClient
 
 			var numberOfColours = _Reader.ReadInt16();
 
-			ColorPalette = new System.Windows.Media.Color[numberOfColours];
+			var colorPalette = new System.Windows.Media.Color[numberOfColours];
 
 			for (int colorIndex = 0; colorIndex < numberOfColours; colorIndex++)
 			{
@@ -1232,7 +1232,12 @@ namespace MiniVNCClient
 				var green = _Reader.ReadBytes(2);
 				var blue = _Reader.ReadBytes(2);
 
-				ColorPalette[colorIndex] = System.Windows.Media.Color.FromRgb(red[1], green[1], blue[1]);
+				colorPalette[colorIndex] = System.Windows.Media.Color.FromRgb(red[1], green[1], blue[1]);
+			}
+
+			if (ColorPalette == null)
+			{
+				ColorPalette = colorPalette;
 			}
 		}
 
