@@ -635,6 +635,12 @@ namespace MiniVNCClient
 						{
 							TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error reading messages from server: {ex.Message}\r\n{ex.StackTrace}");
 
+							if (ex is OutOfMemoryException)
+							{
+								Close();
+								break;
+							}
+
 							retryCount = ++retryCount % 5;
 
 							if (retryCount == 0)
@@ -1212,6 +1218,11 @@ namespace MiniVNCClient
 			}
 			catch (Exception ex)
 			{
+				if (ex is OutOfMemoryException)
+				{
+					throw;
+				}
+
 				TraceSource.TraceEvent(TraceEventType.Error, (int)ServerToClientMessageType.FramebufferUpdate, $"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
 			}
 		}
