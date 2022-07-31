@@ -1,4 +1,7 @@
-﻿using System;
+﻿// To turn on the debug messages, comment the line below
+#undef DEBUG
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -9,6 +12,10 @@ namespace MiniVNCClient.Util
 {
 	public class BinaryReader : System.IO.BinaryReader
 	{
+#if DEBUG
+        private MemoryStream _MemoryStream = new MemoryStream();
+#endif
+
 		#region Construtores
 		public BinaryReader(Stream input) : base(input)
 		{
@@ -17,9 +24,9 @@ namespace MiniVNCClient.Util
 		public BinaryReader(Stream input, Encoding encoding) : base(input, encoding)
 		{
 		}
-		#endregion
+        #endregion
 
-		public override short ReadInt16()
+        public override short ReadInt16()
 		{
 			var bytes = ReadBytes(2);
 
@@ -67,9 +74,46 @@ namespace MiniVNCClient.Util
 			return ((ulong)high << 32) | low;
 		}
 
+#if DEBUG
+        public override int Read(byte[] buffer, int index, int count)
+        {
+			int bytesRead = base.Read(buffer, index, count);
+
+			_MemoryStream.Write(buffer, index, count);
+			
+			return bytesRead;
+        }
+#endif
+
 		public string ReadString(int length)
 		{
 			return Encoding.UTF8.GetString(ReadBytes(length));
 		}
+
+#if DEBUG
+        public override byte ReadByte()
+		{
+			return ReadBytes(1)[0];
+		}
+
+		public override byte[] ReadBytes(int count)
+		{
+			var bytes = base.ReadBytes(count);
+
+			_MemoryStream.Write(bytes, 0, bytes.Length);
+
+			return bytes;
+		}
+
+		public byte[] GetBuffer()
+        {
+			return _MemoryStream.GetBuffer();
+        }
+
+		public void ClearBuffer()
+        {
+			_MemoryStream.SetLength(0);
+        }
+#endif
 	}
 }

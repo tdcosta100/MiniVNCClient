@@ -1,4 +1,7 @@
-﻿using MiniVNCClient.Events;
+﻿// To turn on the debug messages, comment the line below
+#undef DEBUG
+
+using MiniVNCClient.Events;
 using MiniVNCClient.Types;
 using MiniVNCClient.Util;
 using System;
@@ -83,6 +86,10 @@ namespace MiniVNCClient
 
 		private TaskCompletionSource<object> _DelayTask;
 		private Timer _DelayTimer;
+
+		private byte[] _BackBuffer = null;
+		private byte[] _FrontBuffer = null;
+		private readonly object _BufferSwapLock = new object();
 		#endregion
 
 		#region Events
@@ -119,7 +126,7 @@ namespace MiniVNCClient
 			}
 		}
 
-		public bool Connected => _TcpClient?.Connected ?? false;
+		public bool Connected => (_Stream is NetworkStream && _TcpClient.Connected) || _Stream != null;
 
 		public Version ServerVersion { get; private set; }
 
@@ -131,9 +138,7 @@ namespace MiniVNCClient
 
 		public Int32Rect[] UpdatedAreas { get; private set; }
 
-		public byte[] FrameBufferState { get; private set; }
-
-		public int FrameBufferStateStride { get; private set; }
+		public int FrameBufferStride { get; private set; }
 
 		public Int32Rect RemoteCursorSizeAndTipPosition { get; private set; }
 
@@ -361,76 +366,119 @@ namespace MiniVNCClient
 			return Delay((long)delay.TotalMilliseconds);
 		}
 
-		private byte[] FillRectangle(int width, int height, byte[] data)
-		{
-			var rectangleData = new byte[width * height * data.Length];
+		private void TransferData(byte[] source, int sourceStride, Int32Rect sourceRegion, byte[] destination, int destinationStride, Int32Rect destinationRegion)
+        {
+			var sourceLineOffset = sourceRegion.X * SessionInfo.PixelFormat.BytesPerPixel;
+			var destinationLineOffset = destinationRegion.X * SessionInfo.PixelFormat.BytesPerPixel;
+			var regionLineSize = sourceRegion.Width * SessionInfo.PixelFormat.BytesPerPixel;
 
-			FillData(data, rectangleData, 0, rectangleData.Length / data.Length);
-
-			return rectangleData;
-		}
-
-		private void FillData(byte[] source, byte[] destination, int destinationPosition, int count)
-		{
-			if (destinationPosition + count * source.Length > destination.Length)
-			{
-				throw new InvalidOperationException("Data offset and length must be contained inside destination bounds");
+            if (
+				sourceLineOffset + sourceRegion.Width * SessionInfo.PixelFormat.BytesPerPixel > sourceStride
+				||
+				(sourceRegion.Y + sourceRegion.Height) * sourceStride > source.Length
+			)
+            {
+				throw new InvalidOperationException("Source region must be inside the image");
 			}
 
-			Buffer.BlockCopy(source, 0, destination, destinationPosition, source.Length);
+            if (
+				destinationLineOffset + sourceRegion.Width * SessionInfo.PixelFormat.BytesPerPixel > destinationStride
+				||
+				(destinationRegion.Y + sourceRegion.Height) * destinationStride > destination.Length
+			)
+            {
+				throw new InvalidOperationException("Destination region must be inside the image");
+			}
 
-			for (int iteration = 1; iteration < count; iteration *= 2)
+            for (int regionLine = 0; regionLine < sourceRegion.Height; regionLine++)
+            {
+				Buffer.BlockCopy(
+					src: source,
+					srcOffset: sourceStride * (sourceRegion.Y + regionLine) + sourceLineOffset,
+					dst: destination,
+					dstOffset: destinationStride * (destinationRegion.Y + regionLine) + destinationLineOffset,
+					count: regionLineSize
+				);
+            }
+        }
+
+		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, byte[] data)
+        {
+			if (((destinationRegion.Width * SessionInfo.PixelFormat.BytesPerPixel) % data.Length) != 0)
 			{
+				throw new InvalidOperationException("Data length must be divisor of destination length");
+			}
+
+			var destinationLineOffset = destinationRegion.X * SessionInfo.PixelFormat.BytesPerPixel;
+			var regionLineSize = destinationRegion.Width * SessionInfo.PixelFormat.BytesPerPixel;
+
+			var iterationCount = regionLineSize / data.Length;
+			var firstLineStart = destinationStride * destinationRegion.Y + destinationLineOffset;
+
+			for (int iteration = 0; iteration < iterationCount; iteration++)
+            {
+				Buffer.BlockCopy(
+					src: data,
+					srcOffset: 0,
+					dst: destination,
+					dstOffset: firstLineStart + iteration * data.Length,
+					count: data.Length
+				);
+            }
+
+            for (int y = 1; y < destinationRegion.Height; y++)
+            {
 				Buffer.BlockCopy(
 					src: destination,
-					srcOffset: destinationPosition,
+					srcOffset: firstLineStart,
 					dst: destination,
-					dstOffset: destinationPosition + iteration * source.Length,
-					count: Math.Min(iteration * source.Length, (count - iteration) * source.Length)
+					dstOffset: destinationStride * (destinationRegion.Y + y) + destinationLineOffset,
+					count: regionLineSize
 				);
-			}
-		}
+            }
+        }
 
-		private byte[] ReadRectangle(Int32Rect rectangle, byte[] buffer, int bufferStride)
-		{
-			var rectangleStride = rectangle.Width * SessionInfo.PixelFormat.BytesPerPixel;
-			var rectangleLineOffset = rectangle.X * SessionInfo.PixelFormat.BytesPerPixel;
-
-			byte[] rectangleData = new byte[rectangle.Height * rectangleStride];
-
-			for (int rectangleLine = 0; rectangleLine < rectangle.Height; rectangleLine++)
+		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, byte[] data, int start, int count)
+        {
+			if (((destinationRegion.Width * SessionInfo.PixelFormat.BytesPerPixel) % data.Length) != 0)
 			{
-				Buffer.BlockCopy(
-					src: buffer,
-					srcOffset: bufferStride * (rectangle.Y + rectangleLine) + rectangleLineOffset,
-					dst: rectangleData,
-					dstOffset: rectangleLine * rectangleStride,
-					count: rectangleStride
-				);
+				throw new InvalidOperationException("Data length must be divisor of destination length");
 			}
 
-			return rectangleData;
-		}
-
-		private void WriteRectangle(byte[] buffer, int bufferStride, Int32Rect rectangle, byte[] rectangleData)
-		{
-			var rectangleStride = rectangle.Width * SessionInfo.PixelFormat.BytesPerPixel;
-			var rectangleLineOffset = rectangle.X * SessionInfo.PixelFormat.BytesPerPixel;
-
-			for (int rectangleLine = 0; rectangleLine < rectangle.Height; rectangleLine++)
-			{
-				Buffer.BlockCopy(
-					src: rectangleData,
-					srcOffset: rectangleLine * rectangleStride,
-					dst: buffer,
-					dstOffset: bufferStride * (rectangle.Y + rectangleLine) + rectangleLineOffset,
-					count: rectangleStride
-				);
+            if (start + count >= destinationRegion.Height * destinationRegion.Width)
+            {
+				throw new InvalidOperationException("Data range outside destination region");
 			}
-		}
+
+			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+
+			for (int iteration = start; iteration < count; iteration++)
+            {
+				Buffer.BlockCopy(
+					src: data,
+					srcOffset: 0,
+					dst: destination,
+					dstOffset: (destinationRegion.Y + iteration / destinationRegion.Width) * FrameBufferStride + destinationRegion.X * bytesPerPixel + (iteration % destinationRegion.Width) * data.Length,
+					count: data.Length
+				);
+            }
+        }
+
+		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, Util.BinaryReader reader)
+        {
+			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+
+            for (int y = 0; y < destinationRegion.Height; y++)
+            {
+				reader.Read(destination, (destinationRegion.Y + y) * destinationStride + destinationRegion.X * bytesPerPixel, destinationRegion.Width * bytesPerPixel);
+			}
+        }
 
 		private bool Initialize()
 		{
+			_Reader = new Util.BinaryReader(_Stream);
+			_Writer = new BinaryWriter(_Stream);
+
 			try
 			{
 				NegotiateVersion();
@@ -611,8 +659,10 @@ namespace MiniVNCClient
 
 			TraceSource.TraceEvent(TraceEventType.Information, 0, "Received server initialization");
 
-			FrameBufferStateStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
-			FrameBufferState = new byte[SessionInfo.FrameBufferHeight * FrameBufferStateStride];
+			FrameBufferStride = SessionInfo.FrameBufferWidth * SessionInfo.PixelFormat.BytesPerPixel;
+
+			_BackBuffer = new byte[SessionInfo.FrameBufferHeight * FrameBufferStride];
+			_FrontBuffer = new byte[SessionInfo.FrameBufferHeight * FrameBufferStride];
 
 			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Sending supported encodings: {string.Join(", ", _SupportedEncodings.Select(e => e.ToString()))}");
 
@@ -625,7 +675,7 @@ namespace MiniVNCClient
 
 					var retryCount = 0;
 
-					while (_TcpClient?.Connected ?? false)
+					while (Connected)
 					{
 						try
 						{
@@ -660,7 +710,9 @@ namespace MiniVNCClient
 
 		private void MessageHandler(ServerToClientMessageType messageType)
 		{
+#if DEBUG
 			TraceSource.TraceEvent(TraceEventType.Verbose, (int)messageType, $"Received message: {messageType}");
+#endif
 
 			switch (messageType)
 			{
@@ -677,35 +729,20 @@ namespace MiniVNCClient
 					ServerCutTextHandler();
 					break;
 				case ServerToClientMessageType.ResizeFrameBuffer:
-					break;
 				case ServerToClientMessageType.KeyFrameUpdate:
-					break;
 				case ServerToClientMessageType.UltraVNC:
-					break;
 				case ServerToClientMessageType.FileTransfer:
-					break;
 				case ServerToClientMessageType.TextChat:
-					break;
 				case ServerToClientMessageType.KeepAlive:
-					break;
 				case ServerToClientMessageType.VMware:
-					break;
 				case ServerToClientMessageType.CarConnectivity:
-					break;
 				case ServerToClientMessageType.EndOfContinuousUpdates:
-					break;
 				case ServerToClientMessageType.ServerState:
-					break;
 				case ServerToClientMessageType.ServerFence:
-					break;
 				case ServerToClientMessageType.OLIVECallControl:
-					break;
 				case ServerToClientMessageType.xvpServerMessage:
-					break;
 				case ServerToClientMessageType.Tight:
-					break;
 				case ServerToClientMessageType.giiServerMessage:
-					break;
 				case ServerToClientMessageType.QEMUServerMessage:
 					break;
 				default:
@@ -723,11 +760,13 @@ namespace MiniVNCClient
 
 				var numberOfRectangles = _Reader.ReadUInt16();
 
-				TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Total rectangles: {numberOfRectangles}");
+#if DEBUG
+                TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Total rectangles: {numberOfRectangles}");
+#endif
 
 				if (numberOfRectangles > 0)
 				{
-					byte[] newFrameBufferState = null;
+					Buffer.BlockCopy(_FrontBuffer, 0, _BackBuffer, 0, _BackBuffer.Length);
 
 					var updatedAreas = new List<Int32Rect>();
 
@@ -757,16 +796,12 @@ namespace MiniVNCClient
 							encodingType == VNCEncoding.Raw
 						)
 						{
-							if (newFrameBufferState == null)
-							{
-								newFrameBufferState = new byte[FrameBufferState.Length];
-								Buffer.BlockCopy(FrameBufferState, 0, newFrameBufferState, 0, FrameBufferState.Length);
-							}
-
 							updatedAreas.Add(rectangle);
 						}
 
-						TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
+#if DEBUG
+                        TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Rectangle {rectangleIndex}: {{{rectangle}}}, EncodingType = {encodingType} (0x{encodingType:X})");
+#endif
 
 						if (encodingType == VNCEncoding.LastRect)
 						{
@@ -788,8 +823,7 @@ namespace MiniVNCClient
 							originalRectangle.X = _Reader.ReadUInt16();
 							originalRectangle.Y = _Reader.ReadUInt16();
 
-							var rectangleData = ReadRectangle(originalRectangle, newFrameBufferState, FrameBufferStateStride);
-							WriteRectangle(newFrameBufferState, FrameBufferStateStride, rectangle, rectangleData);
+							TransferData(_FrontBuffer, FrameBufferStride, originalRectangle, _BackBuffer, FrameBufferStride, rectangle);
 						}
 
 						if (encodingType == VNCEncoding.ZRLE)
@@ -820,7 +854,7 @@ namespace MiniVNCClient
 							var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
 							var bytesPerCPixel = (bytesPerPixel > 1) ? 3 : 1;
 
-							for (int rleTileY = 0; rleTileY < rectangle.Height; rleTileY += 64)
+                            for (int rleTileY = 0; rleTileY < rectangle.Height; rleTileY += 64)
 							{
 								for (int rleTileX = 0; rleTileX < rectangle.Width; rleTileX += 64)
 								{
@@ -831,16 +865,30 @@ namespace MiniVNCClient
 										height: Math.Min(rectangle.Height - rleTileY, 64)
 									);
 
-									var rleTileData = new byte[rleTile.Width * rleTile.Height * bytesPerPixel];
-
 									var subencoding = reader.ReadByte();
 									var subencodingType = _ZRLESubencodingTypes[subencoding];
 
+#if DEBUG
+                                    TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Subrectangle: {{{rleTile}}}, Subencoding = {subencodingType} (0x{subencodingType:X})");
+#endif
+
 									if (subencodingType == ZRLESubencodingType.Raw)
 									{
-										for (int i = 0; i < rleTile.Width * rleTile.Height; i++)
+										var pixel = new byte[bytesPerPixel];
+
+										if (bytesPerPixel > bytesPerCPixel)
 										{
-											reader.Read(rleTileData, i * bytesPerPixel, bytesPerCPixel);
+											pixel[bytesPerPixel - 1] = 0xff;
+										}
+
+										for (int y = 0; y < rleTile.Height; y++)
+										{
+                                            for (int x = 0; x < rleTile.Width; x++)
+                                            {
+												reader.Read(pixel, 0, bytesPerCPixel);
+
+												Buffer.BlockCopy(pixel, 0, _BackBuffer, (rleTile.Y + y) * FrameBufferStride + (rleTile.X + x) * bytesPerPixel, pixel.Length);
+											}
 										}
 									}
 									else if (subencodingType == ZRLESubencodingType.SolidColor)
@@ -853,9 +901,9 @@ namespace MiniVNCClient
 											color[bytesPerPixel - 1] = 0xff;
 										}
 
-										FillData(color, rleTileData, 0, rleTileData.Length / color.Length);
+										FillData(_BackBuffer, FrameBufferStride, rleTile, color);
 									}
-									else if (subencodingType == ZRLESubencodingType.PackedPalette)
+									else if (2 <= subencoding && subencoding <= 16) // ZRLESubencodingType.PackedPalette
 									{
 										var paletteSize = subencoding;
 
@@ -882,11 +930,7 @@ namespace MiniVNCClient
 
 										var bitsPerPixel = 0;
 
-										if (paletteSize > 16)
-										{
-											bitsPerPixel = 8;
-										}
-										else if (paletteSize > 4)
+										if (paletteSize > 4)
 										{
 											bitsPerPixel = 4;
 										}
@@ -903,39 +947,47 @@ namespace MiniVNCClient
 
 										var stride = (rleTile.Width + 8 / bitsPerPixel - 1) * bitsPerPixel / 8;
 
-										for (int i = 0; i < rleTile.Height; i++)
+										for (int y = 0; y < rleTile.Height; y++)
 										{
 											var packedPixels = reader.ReadBytes(stride);
 
-											for (int j = 0; j < rleTile.Width; j++)
+											for (int x = 0; x < rleTile.Width; x++)
 											{
-												// packedPixels[j * bitsPerPixel / 8] => current byte
-												// >> (8 - ((j * bitsPerPixel) % 8) - bitsPerPixel)) => current pixel value inside byte
+												// packedPixels[x * bitsPerPixel / 8] => current byte
+												// >> (8 - ((x * bitsPerPixel) % 8) - bitsPerPixel)) => current pixel value inside byte
 												// & mask => discard pixels that don't match the palette index
 
-												var paletteIndex = (packedPixels[j * bitsPerPixel / 8] >> (8 - ((j * bitsPerPixel) % 8) - bitsPerPixel)) & mask;
+												var paletteIndex = (packedPixels[x * bitsPerPixel / 8] >> (8 - ((x * bitsPerPixel) % 8) - bitsPerPixel)) & mask;
 
 												var color = palette[paletteIndex];
 
-												Buffer.BlockCopy(color, 0, rleTileData, (i * rleTile.Width + j) * color.Length, color.Length);
+												Buffer.BlockCopy(
+													src: color,
+													srcOffset: 0,
+													dst: _BackBuffer,
+													dstOffset: (rleTile.Y + y) * FrameBufferStride + (rleTile.X + x) * bytesPerPixel,
+													count: color.Length
+												);
 											}
 										}
 									}
 									else if (subencodingType == ZRLESubencodingType.PlainRLE)
 									{
-										var currentPosition = 0;
+										var color = new byte[bytesPerPixel];
 
-										while (currentPosition < rleTileData.Length)
+										if (bytesPerPixel > bytesPerCPixel)
 										{
-											var color = new byte[bytesPerPixel];
+											color[bytesPerPixel - 1] = 0xff;
+										}
+
+										var maxPosition = rleTile.Width * rleTile.Height;
+										var runLength = 0;
+
+										for (var currentPosition = 0; currentPosition < maxPosition; currentPosition += runLength)
+                                        {
 											reader.Read(color, 0, bytesPerCPixel);
 
-											if (bytesPerPixel > bytesPerCPixel)
-											{
-												color[bytesPerPixel - 1] = 0xff;
-											}
-
-											var runLength = 1;
+											runLength = 1;
 
 											var currentByte = reader.ReadByte();
 
@@ -948,12 +1000,10 @@ namespace MiniVNCClient
 
 											runLength += currentByte;
 
-											FillData(color, rleTileData, currentPosition, Math.Min(runLength, (rleTileData.Length - currentPosition) / bytesPerPixel));
-
-											currentPosition += runLength * color.Length;
+											FillData(_BackBuffer, FrameBufferStride, rleTile, color, currentPosition, runLength);
 										}
 									}
-									else if (subencodingType == ZRLESubencodingType.PaletteRLE)
+									else if (130 <= subencoding && subencoding <= 255) // ZRLESubencodingType.PaletteRLE
 									{
 										var paletteSize = subencoding & 0x7f;
 
@@ -978,17 +1028,18 @@ namespace MiniVNCClient
 											}
 										}
 
-										var currentPosition = 0;
+										var maxPosition = rleTile.Width * rleTile.Height;
+										var runLength = 0;
 
-										while (currentPosition < rleTileData.Length)
-										{
+                                        for (int currentPosition = 0; currentPosition < maxPosition; currentPosition += runLength)
+                                        {
 											var currentByte = reader.ReadByte();
 
 											var paletteIndex = currentByte & 0x7f;
 
 											var color = palette[paletteIndex];
 
-											var runLength = 1;
+											runLength = 1;
 
 											if ((currentByte & 0x80) != 0)
 											{
@@ -1004,13 +1055,9 @@ namespace MiniVNCClient
 												runLength += currentByte;
 											}
 
-											FillData(color, rleTileData, currentPosition, Math.Min(runLength, (rleTileData.Length - currentPosition) / bytesPerPixel));
-
-											currentPosition += runLength * color.Length;
+											FillData(_BackBuffer, FrameBufferStride, rleTile, color, currentPosition, runLength);
 										}
 									}
-
-									WriteRectangle(newFrameBufferState, FrameBufferStateStride, rleTile, rleTileData);
 								}
 							}
 						}
@@ -1018,11 +1065,12 @@ namespace MiniVNCClient
 						if (encodingType == VNCEncoding.Hextile || encodingType == VNCEncoding.ZlibHex)
 						{
 							Util.BinaryReader reader = null;
-
-							byte[] foregroundColor = null;
-							byte[] backgroundColor = null;
-
 							var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+
+							var backgroundColor = new byte[bytesPerPixel];
+							var foregroundColor = new byte[bytesPerPixel];
+							var subrectangleColor = new byte[bytesPerPixel];
+							var pixel = new byte[bytesPerPixel];
 
 							for (int hextileY = 0; hextileY < rectangle.Height; hextileY += 16)
 							{
@@ -1036,6 +1084,10 @@ namespace MiniVNCClient
 									);
 
 									var subencodingMask = (HextileSubencodingMask)_Reader.ReadByte();
+
+#if DEBUG
+									TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Subrectangle: {{{hextile}}}, Subencoding = {subencodingMask} (0x{subencodingMask:X})");
+#endif
 
 									if (encodingType == VNCEncoding.ZlibHex)
 									{
@@ -1092,16 +1144,13 @@ namespace MiniVNCClient
 									{
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ZlibRaw))
 										{
-											reader = _DeflateStreamReader;
+											FillData(_BackBuffer, FrameBufferStride, hextile, _DeflateStreamReader);
 										}
 										else
 										{
-											reader = _Reader;
+											FillData(_BackBuffer, FrameBufferStride, hextile, _Reader);
 										}
 
-										var hextileData = reader.ReadBytes(hextile.Width * hextile.Height * bytesPerPixel);
-
-										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, hextileData);
 									}
 									else
 									{
@@ -1114,37 +1163,32 @@ namespace MiniVNCClient
 											reader = _Reader;
 										}
 
-										byte[] hextileData = null;
-
 										if (subencodingMask.HasFlag(HextileSubencodingMask.BackgroundSpecified))
 										{
-											backgroundColor = reader.ReadBytes(bytesPerPixel);
+											reader.Read(backgroundColor, 0, bytesPerPixel);
 										}
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.ForegroundSpecified))
 										{
-											foregroundColor = reader.ReadBytes(bytesPerPixel);
+											reader.Read(foregroundColor, 0, bytesPerPixel);
 										}
 
-										hextileData = FillRectangle(hextile.Width, hextile.Height, backgroundColor);
-
-										WriteRectangle(newFrameBufferState, FrameBufferStateStride, hextile, hextileData);
+										FillData(_BackBuffer, FrameBufferStride, hextile, backgroundColor);
 
 										if (subencodingMask.HasFlag(HextileSubencodingMask.AnySubrects))
 										{
 											var numberOfSubrectangles = reader.ReadByte();
 
+											if (!subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
+											{
+												Buffer.BlockCopy(foregroundColor, 0, subrectangleColor, 0, bytesPerPixel);
+											}
+
 											for (int subrectangleIndex = 0; subrectangleIndex < numberOfSubrectangles; subrectangleIndex++)
 											{
-												byte[] subrectangleColor = null;
-
 												if (subencodingMask.HasFlag(HextileSubencodingMask.SubrectsColoured))
 												{
-													subrectangleColor = reader.ReadBytes(bytesPerPixel);
-												}
-												else
-												{
-													subrectangleColor = foregroundColor;
+													reader.Read(subrectangleColor, 0, bytesPerPixel);
 												}
 
 												var subrectangleXY = reader.ReadByte();
@@ -1157,9 +1201,7 @@ namespace MiniVNCClient
 													height: (subrectangleWidthHeight & 0x0f) + 1
 												);
 
-												var subrectangleData = FillRectangle(subrectangle.Width, subrectangle.Height, subrectangleColor);
-
-												WriteRectangle(newFrameBufferState, FrameBufferStateStride, subrectangle, subrectangleData);
+												FillData(_BackBuffer, FrameBufferStride, subrectangle, subrectangleColor);
 											}
 										}
 									}
@@ -1169,7 +1211,7 @@ namespace MiniVNCClient
 
 						if (encodingType == VNCEncoding.Raw || encodingType == VNCEncoding.Zlib)
 						{
-							byte[] rectangleData = null;
+							var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
 
 							if (encodingType == VNCEncoding.Zlib)
 							{
@@ -1193,26 +1235,31 @@ namespace MiniVNCClient
 									_DeflateStreamReader = new Util.BinaryReader(_DeflateStream);
 								}
 
-								rectangleData = _DeflateStreamReader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+								FillData(_BackBuffer, FrameBufferStride, rectangle, _DeflateStreamReader);
 							}
 							else
 							{
-								rectangleData = _Reader.ReadBytes(rectangle.Width * rectangle.Height * SessionInfo.PixelFormat.BytesPerPixel);
+								FillData(_BackBuffer, FrameBufferStride, rectangle, _Reader);
 							}
-
-							WriteRectangle(newFrameBufferState, FrameBufferStateStride, rectangle, rectangleData);
 						}
 					}
 
-					if (newFrameBufferState != null)
-					{
-						FrameBufferState = newFrameBufferState;
+                    if (updatedAreas.Count > 0)
+                    {
+						lock (_BufferSwapLock)
+						{
+							var aux = _FrontBuffer;
+							_FrontBuffer = _BackBuffer;
+							_BackBuffer = aux;
+						}
 
 						UpdatedAreas = updatedAreas.ToArray();
 
-						TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
+#if DEBUG
+                        TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.FramebufferUpdate, $"Finished updating framebuffer after {(DateTime.Now - updateStartTime).TotalSeconds} seconds");
+#endif
 
-						FrameBufferUpdated?.Invoke(this, new FrameBufferUpdatedEventArgs(updateStartTime, updatedAreas.ToArray(), newFrameBufferState));
+						FrameBufferUpdated?.Invoke(this, new FrameBufferUpdatedEventArgs(updateStartTime, updatedAreas.ToArray()));
 					}
 				}
 			}
@@ -1261,7 +1308,10 @@ namespace MiniVNCClient
 			if (length > 0)
 			{
 				var text = _Reader.ReadString();
-				TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.ServerCutText, $"Server cut text: \"{text}\"");
+
+#if DEBUG
+                TraceSource.TraceEvent(TraceEventType.Verbose, (int)ServerToClientMessageType.ServerCutText, $"Server cut text: \"{text}\"");
+#endif
 
 				ServerCutText?.Invoke(this, new ServerCutTextEventArgs(text));
 			}
@@ -1279,7 +1329,11 @@ namespace MiniVNCClient
 			if (TraceSource == null)
 			{
 				TraceSource = new TraceSource("MiniVNCClient");
-			}
+
+#if DEBUG
+				TraceSource.Switch.Level = SourceLevels.All;
+#endif
+            }
 
 			TraceSource.TraceEvent(TraceEventType.Information, 0, $"Connecting to {hostname}:{port}");
 
@@ -1295,19 +1349,35 @@ namespace MiniVNCClient
 			}
 
 			_Stream = _TcpClient.GetStream();
-			_Reader = new Util.BinaryReader(_Stream);
-			_Writer = new BinaryWriter(_Stream);
 
 			TraceSource.TraceEvent(TraceEventType.Information, 0, "Connection successful, initializing session");
 
 			return Initialize();
 		}
 
+		public bool Connect(Stream stream)
+        {
+			if (TraceSource == null)
+			{
+				TraceSource = new TraceSource("MiniVNCClient");
+
+#if DEBUG
+				TraceSource.Switch.Level = SourceLevels.All;
+#endif
+			}
+
+			_Stream = stream;
+			
+			return Initialize();
+        }
+
 		public bool SendMessage(ClientToServerMessageType messageType, byte[] content)
 		{
-			if (_TcpClient?.Connected ?? false)
+			if (Connected)
 			{
+#if DEBUG
 				TraceSource.TraceEvent(TraceEventType.Verbose, (int)messageType, $"Sending message {messageType}");
+#endif
 
 				_Writer.Write((byte)messageType);
 				_Writer.Write(content);
@@ -1405,14 +1475,40 @@ namespace MiniVNCClient
 			);
 		}
 
-		public byte[] GetFrameBufferArea(Int32Rect area)
-		{
-			if (!Connected || FrameBufferState == null)
+		public void GetFrameBuffer(byte[] buffer, int bufferOffset)
+        {
+			if (!Connected || _FrontBuffer == null)
 			{
-				return null;
+				return;
 			}
 
-			return ReadRectangle(area, FrameBufferState, FrameBufferStateStride);
+            lock (_BufferSwapLock)
+            {
+				Buffer.BlockCopy(_FrontBuffer, 0, buffer, bufferOffset, _FrontBuffer.Length);
+            }
+		}
+
+		public void GetFrameBuffer(IntPtr bufferPtr)
+        {
+			if (!Connected || _FrontBuffer == null)
+			{
+				return;
+			}
+
+			System.Runtime.InteropServices.Marshal.Copy(_FrontBuffer, 0, bufferPtr, _FrontBuffer.Length);
+		}
+
+		public void GetFrameBufferArea(Int32Rect sourceArea, byte[] destination, int destinationStride, Int32Rect destinationArea)
+		{
+			if (!Connected || _FrontBuffer == null)
+			{
+				return;
+			}
+
+            lock (_BufferSwapLock)
+            {
+				TransferData(_FrontBuffer, FrameBufferStride, sourceArea, destination, destinationStride, destinationArea);
+			}
 		}
 
 		public void Close()
@@ -1424,7 +1520,11 @@ namespace MiniVNCClient
 		{
 			_TcpClient?.Close();
 
-			_Stream?.Dispose();
+            if (_TcpClient != null)
+            {
+				_Stream?.Dispose();
+            }
+
 			_DeflateStream?.Dispose();
 			_DeflateStream2?.Dispose();
 			_MemoryStreamCompressed?.Dispose();
@@ -1454,11 +1554,13 @@ namespace MiniVNCClient
 			_DelayTask = null;
 			_DelayTimer = null;
 
+			_BackBuffer = null;
+			_FrontBuffer = null;
+
 			ServerVersion = null;
 			SessionInfo = default;
 			Password = null;
-			FrameBufferState = null;
-			FrameBufferStateStride = default;
+			FrameBufferStride = default;
 			RemoteCursorSizeAndTipPosition = default;
 			RemoteCursorData = null;
 			RemoteCursorBitMask = null;

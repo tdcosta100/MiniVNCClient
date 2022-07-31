@@ -128,14 +128,12 @@ namespace MiniVNCClient.WPFExample
 		{
 			Dispatcher.BeginInvoke(new Action(() =>
 			{
-				var stride = _Client.FrameBufferStateStride;
-
 				_WriteableBitmap.Lock();
+
+				_Client.GetFrameBuffer(_WriteableBitmap.BackBuffer);
 
 				foreach (var area in e.UpdatedAreas)
 				{
-					_WriteableBitmap.WritePixels(area, e.CurrentFrameBuffer, stride, area.X, area.Y);
-
 					_WriteableBitmap.AddDirtyRect(area);
 				}
 
