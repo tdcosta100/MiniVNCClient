@@ -440,25 +440,27 @@ namespace MiniVNCClient
 
 		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, byte[] data, int start, int count)
         {
-			if (((destinationRegion.Width * SessionInfo.PixelFormat.BytesPerPixel) % data.Length) != 0)
+			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+
+			if (((destinationRegion.Width * bytesPerPixel) % data.Length) != 0)
 			{
 				throw new InvalidOperationException("Data length must be divisor of destination length");
 			}
 
-            if (start + count >= destinationRegion.Height * destinationRegion.Width)
+            if (start + count > destinationRegion.Height * destinationRegion.Width)
             {
 				throw new InvalidOperationException("Data range outside destination region");
 			}
 
-			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
+			var iterationsPerWidth = destinationRegion.Width * bytesPerPixel / data.Length;
 
-			for (int iteration = start; iteration < count; iteration++)
+			for (int iteration = start; iteration - start < count; iteration++)
             {
 				Buffer.BlockCopy(
 					src: data,
 					srcOffset: 0,
 					dst: destination,
-					dstOffset: (destinationRegion.Y + iteration / destinationRegion.Width) * FrameBufferStride + destinationRegion.X * bytesPerPixel + (iteration % destinationRegion.Width) * data.Length,
+					dstOffset: (destinationRegion.Y + iteration / destinationRegion.Width) * FrameBufferStride + destinationRegion.X * bytesPerPixel + (iteration % iterationsPerWidth) * data.Length,
 					count: data.Length
 				);
             }
