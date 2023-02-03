@@ -489,7 +489,7 @@ namespace MiniVNCClient
 			}
 			catch (Exception ex)
 			{
-				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error during intialization: {ex.Message},\r\n{ex.StackTrace}");
+				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error during intialization: {ex.GetType()} - {ex.Message}{Environment.NewLine}{ex.StackTrace}");
 				return false;
 			}
 
@@ -685,9 +685,9 @@ namespace MiniVNCClient
 						}
 						catch (Exception ex)
 						{
-							TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error reading messages from server: {ex.Message}\r\n{ex.StackTrace}");
+							TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error reading messages from server: {ex.GetType()} - {ex.Message}{Environment.NewLine}{ex.StackTrace}");
 
-							if (ex is OutOfMemoryException)
+							if (ex is OutOfMemoryException || ex is IOException || ex is SocketException)
 							{
 								Close();
 								break;
@@ -1272,7 +1272,7 @@ namespace MiniVNCClient
 					throw;
 				}
 
-				TraceSource.TraceEvent(TraceEventType.Error, (int)ServerToClientMessageType.FramebufferUpdate, $"Error while updating Framebuffer: {ex.Message}\r\n{ex.StackTrace}");
+				TraceSource.TraceEvent(TraceEventType.Error, (int)ServerToClientMessageType.FramebufferUpdate, $"Error while updating Framebuffer: {ex.GetType()} - {ex.Message}{Environment.NewLine}{ex.StackTrace}");
 			}
 		}
 
@@ -1346,7 +1346,7 @@ namespace MiniVNCClient
 			}
 			catch (Exception ex)
 			{
-				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error connecting to {hostname}:{port}: {ex.Message}");
+				TraceSource.TraceEvent(TraceEventType.Error, 0, $"Error connecting to {hostname}:{port}: {ex.GetType()} - {ex.Message}{Environment.NewLine}{ex.StackTrace}");
 				return false;
 			}
 
