@@ -1,12 +1,10 @@
 ﻿// To turn on the debug messages, comment the line below
 #undef DEBUG
 
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
+
 using System.Text;
-using System.Threading.Tasks;
+
 
 namespace MiniVNCClient.Util
 {

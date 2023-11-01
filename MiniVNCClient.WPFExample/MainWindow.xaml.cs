@@ -1,19 +1,16 @@
 ﻿using System;
-using System.Collections.Generic;
+
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
+
 using System.Threading.Tasks;
+
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
+
 
 namespace MiniVNCClient.WPFExample
 {
@@ -98,7 +95,7 @@ namespace MiniVNCClient.WPFExample
 								Task.Delay(TimeSpan.FromMilliseconds(100)).Wait();
 							} while (_Client.ColorPalette == null);
 
-							_WriteableBitmap = new WriteableBitmap(_Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight, 96, 96, PixelFormats.Indexed8, new BitmapPalette(_Client.ColorPalette));
+							_WriteableBitmap = new WriteableBitmap(_Client.SessionInfo.FrameBufferWidth, _Client.SessionInfo.FrameBufferHeight, 96, 96, PixelFormats.Indexed8, new BitmapPalette(_Client.ColorPalette.Select( x => Color.FromRgb(x.R, x.G, x.B)).ToArray()));
 						}
 
 						remoteFrameBuffer.Width = _WriteableBitmap.Width;
@@ -134,7 +131,13 @@ namespace MiniVNCClient.WPFExample
 
 				foreach (var area in e.UpdatedAreas)
 				{
-					_WriteableBitmap.AddDirtyRect(area);
+					_WriteableBitmap.AddDirtyRect(new Int32Rect()
+					{
+						X = area.X,
+						Y = area.Y,
+						Width = area.Width,
+						Height = area.Height
+					});
 				}
 
 				_WriteableBitmap.Unlock();
