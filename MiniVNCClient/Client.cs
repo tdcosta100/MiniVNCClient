@@ -4,19 +4,21 @@
 using MiniVNCClient.Events;
 using MiniVNCClient.Types;
 using MiniVNCClient.Util;
+
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Diagnostics;
 using System.Net.Sockets;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
+
+using System.Drawing;
 
 namespace MiniVNCClient
 {
@@ -132,15 +134,15 @@ namespace MiniVNCClient
 
 		public ServerInit SessionInfo { get; private set; }
 
-		public System.Windows.Media.Color[] ColorPalette { get; private set; }
+		public Color[] ColorPalette { get; private set; }
 
 		public string Password { get; set; }
 
-		public Int32Rect[] UpdatedAreas { get; private set; }
+		public Rectangle[] UpdatedAreas { get; private set; }
 
 		public int FrameBufferStride { get; private set; }
 
-		public Int32Rect RemoteCursorSizeAndTipPosition { get; private set; }
+		public Rectangle RemoteCursorSizeAndTipPosition { get; private set; }
 
 		public byte[] RemoteCursorData { get; private set; }
 
@@ -366,7 +368,7 @@ namespace MiniVNCClient
 			return Delay((long)delay.TotalMilliseconds);
 		}
 
-		private void TransferData(byte[] source, int sourceStride, Int32Rect sourceRegion, byte[] destination, int destinationStride, Int32Rect destinationRegion)
+		private void TransferData(byte[] source, int sourceStride, Rectangle sourceRegion, byte[] destination, int destinationStride, Rectangle destinationRegion)
         {
 			var sourceLineOffset = sourceRegion.X * SessionInfo.PixelFormat.BytesPerPixel;
 			var destinationLineOffset = destinationRegion.X * SessionInfo.PixelFormat.BytesPerPixel;
@@ -402,7 +404,7 @@ namespace MiniVNCClient
             }
         }
 
-		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, byte[] data)
+		private void FillData(byte[] destination, int destinationStride, Rectangle destinationRegion, byte[] data)
         {
 			if (((destinationRegion.Width * SessionInfo.PixelFormat.BytesPerPixel) % data.Length) != 0)
 			{
@@ -438,7 +440,7 @@ namespace MiniVNCClient
             }
         }
 
-		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, byte[] data, int start, int count)
+		private void FillData(byte[] destination, int destinationStride, Rectangle destinationRegion, byte[] data, int start, int count)
         {
 			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
 
@@ -466,7 +468,7 @@ namespace MiniVNCClient
             }
         }
 
-		private void FillData(byte[] destination, int destinationStride, Int32Rect destinationRegion, Util.BinaryReader reader)
+		private void FillData(byte[] destination, int destinationStride, Rectangle destinationRegion, Util.BinaryReader reader)
         {
 			var bytesPerPixel = SessionInfo.PixelFormat.BytesPerPixel;
 
@@ -770,11 +772,11 @@ namespace MiniVNCClient
 				{
 					Buffer.BlockCopy(_FrontBuffer, 0, _BackBuffer, 0, _BackBuffer.Length);
 
-					var updatedAreas = new List<Int32Rect>();
+					var updatedAreas = new List<Rectangle>();
 
 					for (int rectangleIndex = 0; rectangleIndex < numberOfRectangles; rectangleIndex++)
 					{
-						var rectangle = new Int32Rect()
+						var rectangle = new Rectangle()
 						{
 							X = _Reader.ReadUInt16(),
 							Y = _Reader.ReadUInt16(),
@@ -860,7 +862,7 @@ namespace MiniVNCClient
 							{
 								for (int rleTileX = 0; rleTileX < rectangle.Width; rleTileX += 64)
 								{
-									var rleTile = new Int32Rect(
+									var rleTile = new Rectangle(
 										x: rleTileX + rectangle.X,
 										y: rleTileY + rectangle.Y,
 										width: Math.Min(rectangle.Width - rleTileX, 64),
@@ -1078,7 +1080,7 @@ namespace MiniVNCClient
 							{
 								for (int hextileX = 0; hextileX < rectangle.Width; hextileX += 16)
 								{
-									var hextile = new Int32Rect(
+									var hextile = new Rectangle(
 										x: hextileX + rectangle.X,
 										y: hextileY + rectangle.Y,
 										width: Math.Min(rectangle.Width - hextileX, 16),
@@ -1196,7 +1198,7 @@ namespace MiniVNCClient
 												var subrectangleXY = reader.ReadByte();
 												var subrectangleWidthHeight = reader.ReadByte();
 
-												var subrectangle = new Int32Rect(
+												var subrectangle = new Rectangle(
 													x: ((subrectangleXY & 0xf0) >> 4) + hextile.X,
 													y: (subrectangleXY & 0x0f) + hextile.Y,
 													width: ((subrectangleWidthHeight & 0xf0) >> 4) + 1,
@@ -1284,7 +1286,7 @@ namespace MiniVNCClient
 
 			var numberOfColours = _Reader.ReadInt16();
 
-			var colorPalette = new System.Windows.Media.Color[numberOfColours];
+			var colorPalette = new Color[numberOfColours];
 
 			for (int colorIndex = 0; colorIndex < numberOfColours; colorIndex++)
 			{
@@ -1292,7 +1294,7 @@ namespace MiniVNCClient
 				var green = _Reader.ReadBytes(2);
 				var blue = _Reader.ReadBytes(2);
 
-				colorPalette[colorIndex] = System.Windows.Media.Color.FromRgb(red[1], green[1], blue[1]);
+				colorPalette[colorIndex] = Color.FromArgb(red[1], green[1], blue[1]);
 			}
 
 			if (ColorPalette == null)
@@ -1500,7 +1502,7 @@ namespace MiniVNCClient
 			System.Runtime.InteropServices.Marshal.Copy(_FrontBuffer, 0, bufferPtr, _FrontBuffer.Length);
 		}
 
-		public void GetFrameBufferArea(Int32Rect sourceArea, byte[] destination, int destinationStride, Int32Rect destinationArea)
+		public void GetFrameBufferArea(Rectangle sourceArea, byte[] destination, int destinationStride, Rectangle destinationArea)
 		{
 			if (!Connected || _FrontBuffer == null)
 			{
