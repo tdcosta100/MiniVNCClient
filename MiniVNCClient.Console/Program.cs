@@ -6,6 +6,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+
 namespace MiniVNCClient.ConsoleExample
 {
 	class Program
@@ -124,22 +128,22 @@ namespace MiniVNCClient.ConsoleExample
 
 					client.GetFrameBuffer(frameBuffer, 0);
 
-					using (var file = File.Open($@"Images\{e.UpdateTime:HH_mm_ss.fff}.png", FileMode.Create, FileAccess.Write, FileShare.Read))
-					using (var image = new ImageMagick.MagickImage(frameBuffer, new ImageMagick.PixelReadSettings(client.SessionInfo.FrameBufferWidth, client.SessionInfo.FrameBufferHeight, ImageMagick.StorageType.Char, "BGRA")))
-					{
-						image.Format = ImageMagick.MagickFormat.Png32;
+					var gchPixels = GCHandle.Alloc(frameBuffer, GCHandleType.Pinned);
 
-						image.Alpha(ImageMagick.AlphaOption.Off);
-						image.Alpha(ImageMagick.AlphaOption.Remove);
+					var bitmap = new Bitmap(
+						client.SessionInfo.FrameBufferWidth, 
+						client.SessionInfo.FrameBufferHeight, 
+						client.SessionInfo.FrameBufferWidth * client.SessionInfo.PixelFormat.BytesPerPixel,
+						PixelFormat.Format32bppPArgb,
+						gchPixels.AddrOfPinnedObject());
 
-						image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-level", "2");
-						image.Settings.SetDefine(ImageMagick.MagickFormat.Png, "compression-filter", "2");
+					gchPixels.Free();
 
-						image.Write(file);
+					bitmap.Save($@"Images\{e.UpdateTime:HH_mm_ss.fff}.png", ImageFormat.Png);
+					bitmap.Dispose();
 
-						var encodingFinishTime = DateTime.Now;
-						Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, image size {file.Length:N} bytes, total time {(encodingFinishTime - e.UpdateTime).TotalSeconds} seconds at {encodingFinishTime:dd/MM/yyyy HH:mm:ss.fff}");
-					}
+					var encodingFinishTime = DateTime.Now;
+					Trace.TraceInformation($"Image encoding lasted {(encodingFinishTime - encodingStartTime).TotalSeconds} seconds, total time {(encodingFinishTime - e.UpdateTime).TotalSeconds} seconds at {encodingFinishTime:dd/MM/yyyy HH:mm:ss.fff}");
 				});
 			};
 
