@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
+
+using System.Drawing;
 
 namespace MiniVNCClient.Events
 {
@@ -12,11 +9,11 @@ namespace MiniVNCClient.Events
 		#region Properties
 		public DateTime UpdateTime { get; }
 
-		public Int32Rect[] UpdatedAreas { get; }
+		public Rectangle[] UpdatedAreas { get; }
 		#endregion
 
 		#region Constructors
-		public FrameBufferUpdatedEventArgs(DateTime updateTime, Int32Rect[] updatedAreas) : base(Types.ServerToClientMessageType.FramebufferUpdate)
+		public FrameBufferUpdatedEventArgs(DateTime updateTime, Rectangle[] updatedAreas) : base(Types.ServerToClientMessageType.FramebufferUpdate)
 		{
 			UpdateTime = updateTime;
 			UpdatedAreas = updatedAreas;

@@ -1,11 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Runtime.Serialization.Formatters.Binary;
-using System.Text;
-using System.Threading.Tasks;
+
 
 namespace MiniVNCClient.Types
 {
@@ -23,7 +19,7 @@ namespace MiniVNCClient.Types
 
 		public byte[] ToByteArray()
 		{
-			return BitConverter.GetBytes(_Shared);
+			return new byte[1] { _Shared };
 		}
 	}
 }
