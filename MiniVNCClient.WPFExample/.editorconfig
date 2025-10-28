@@ -1,0 +1,17 @@
+[*.csproj]
+# Indentation and spacing
+indent_size = 2
+indent_style = space
+tab_width = 2
+
+[*.cs]
+# Indentation and spacing
+indent_size = 4
+indent_style = space
+tab_width = 4
+
+[*.xaml]
+# Indentation and spacing
+indent_size = 4
+indent_style = space
+tab_width = 4
