@@ -218,6 +218,11 @@ namespace MiniVNCClient
         /// Raised when the server updates the remote cursor.
         /// </summary>
         public event Action? CursorUpdated;
+        
+        /// <summary>
+        /// Raised when the client is disconnected.
+        /// </summary>
+        public event Action? Disconnected;
         #endregion
 
         #region Properties
@@ -999,6 +1004,8 @@ namespace MiniVNCClient
             catch
             {
             }
+
+            Disconnected?.Invoke();
         }
 
         /// <summary>
