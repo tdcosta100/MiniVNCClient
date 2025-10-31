@@ -24,6 +24,7 @@ namespace MiniVNCClient.WPFExample
         private readonly Client _Client;
         private WriteableBitmap? _RemoteFramebufferCanvas;
         private bool _RemoteFramebufferLocked = false;
+        private string _OriginalWindowTitle;
         #endregion
 
         #region Events
@@ -53,9 +54,12 @@ namespace MiniVNCClient.WPFExample
             _Client.PaletteUpdated += PaletteUpdatedHandler;
             _Client.CursorUpdated += CursorUpdatedHandler;
             _Client.Bell += BellHandler;
+            _Client.ServerNameChanged += ServerNameChangedHandler;
             _Client.Disconnected += DisconnectedHandler;
 
             InitializeComponent();
+
+            _OriginalWindowTitle = Title;
         }
         #endregion
 
@@ -94,11 +98,21 @@ namespace MiniVNCClient.WPFExample
                 try
                 {
                     _Client.Connect(host, port, TimeSpan.FromSeconds(5));
+
                     Connecting = false;
                     NotifyPropertyChanged(nameof(Connecting));
                     NotifyPropertyChanged(nameof(Connected));
 
-                    Dispatcher.Invoke(() => LabelHost.Content = $"{host}:{port}");
+                    if (!_Client.Connected)
+                    {
+                        return;
+                    }
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        Title = $"{Title} - {_Client.ServerInfo.Name}";
+                        LabelHost.Content = $"{host}:{port}";
+                    });
 
                     if (_Client.ServerInfo.PixelFormat.TrueColorFlag == 1)
                     {
@@ -512,16 +526,26 @@ namespace MiniVNCClient.WPFExample
             SystemSounds.Beep.Play();
         }
 
+        private void ServerNameChangedHandler()
+        {
+            Dispatcher.Invoke(() => Title = $"{_OriginalWindowTitle} - {_Client.ServerInfo.Name}");
+        }
+
         private void DisconnectedHandler()
         {
             NotifyPropertyChanged(nameof(Connected));
 
-            RemoteFramebuffer.Source = null;
-            RemoteCursor.Source = null;
+            Dispatcher.Invoke(() =>
+            {
+                RemoteFramebuffer.Source = null;
+                RemoteCursor.Source = null;
 
-            _RemoteFramebufferCanvas = null;
+                _RemoteFramebufferCanvas = null;
 
-            SizeToContent = SizeToContent.WidthAndHeight;
+                SizeToContent = SizeToContent.WidthAndHeight;
+
+                Title = _OriginalWindowTitle;
+            });
         }
         #endregion
         #endregion

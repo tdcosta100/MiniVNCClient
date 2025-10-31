@@ -29,6 +29,7 @@ namespace MiniVNCClient
         public event Action<FenceFlags, byte[]?>? ServerFence;
         public event Action<DateTime, RectangleInfo, CursorData>? Cursor;
         public event Action<DateTime, RectangleInfo>? FramebufferSizeChange;
+        public event Action<string>? ServerNameChange;
         #endregion
 
         #region Public properties
@@ -80,6 +81,17 @@ namespace MiniVNCClient
                     while (rectangleLength-- > 0)
                     {
                         var rectangleInfo = Serializer.Deserialize<RectangleInfo>(stream);
+
+                        if (rectangleInfo.Encoding == VNCEncoding.DesktopName)
+                        {
+                            ServerNameChange?.Invoke(
+                                Encoding.UTF8.GetString(
+                                    stream.ReadBytes((int)stream.ReadUInt32())
+                                )
+                            );
+
+                            continue;
+                        }
 
                         if (rectangleInfo.Encoding == VNCEncoding.LastRect)
                         {

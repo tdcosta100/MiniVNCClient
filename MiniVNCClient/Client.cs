@@ -97,9 +97,10 @@ namespace MiniVNCClient
             VNCEncoding.LastRect,
             VNCEncoding.Cursor,
             VNCEncoding.XCursor,
+            VNCEncoding.DesktopName,
             VNCEncoding.Fence,
             VNCEncoding.ContinuousUpdates,
-            VNCEncoding.CursorWithAlpha,
+            VNCEncoding.CursorWithAlpha
         ];
 
         [GeneratedRegex(@"RFB 0*(?<major>\d+)\.0*(?<minor>\d+)\n")]
@@ -218,6 +219,11 @@ namespace MiniVNCClient
         /// Raised when the server updates the remote cursor.
         /// </summary>
         public event Action? CursorUpdated;
+
+        /// <summary>
+        /// Raised when the server name changes
+        /// </summary>
+        public event Action? ServerNameChanged;
         
         /// <summary>
         /// Raised when the client is disconnected.
@@ -493,6 +499,7 @@ namespace MiniVNCClient
             MessageHandler.ServerFence += ServerFenceHandler;
             MessageHandler.Cursor += CursorHandler;
             MessageHandler.FramebufferSizeChange += FramebufferSizeChangeHandler;
+            MessageHandler.ServerNameChange += ServerNameChangeHandler;
 
             _Logger?.LogInformation("Sending supported encodings: {supportedEncodings}", string.Join(", ", _SupportedEncodings));
 
@@ -562,6 +569,7 @@ namespace MiniVNCClient
                 }
             }
         }
+
         private void UpdateFramebufferEndHandler(DateTime updateTime, IEnumerable<RectangleInfo> rectangles)
         {
             try
@@ -865,6 +873,20 @@ namespace MiniVNCClient
                 _FramebufferHandle = GCHandle.Alloc(_Framebuffer, GCHandleType.Pinned);
                 _FramebufferAddress = _FramebufferHandle.Value.AddrOfPinnedObject();
             }
+        }
+
+        private void ServerNameChangeHandler(string name)
+        {
+            ServerInfo = new ServerInfo()
+            {
+                FramebufferWidth = ServerInfo.FramebufferWidth,
+                FramebufferHeight = ServerInfo.FramebufferHeight,
+                PixelFormat = ServerInfo.PixelFormat,
+                NameLength = (uint)name.Length,
+                Name = name
+            };
+
+            ServerNameChanged?.Invoke();
         }
         #endregion
 
