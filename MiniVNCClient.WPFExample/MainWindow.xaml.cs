@@ -53,12 +53,14 @@ namespace MiniVNCClient.WPFExample
             _Client.PaletteUpdated += PaletteUpdatedHandler;
             _Client.CursorUpdated += CursorUpdatedHandler;
             _Client.Bell += BellHandler;
+            _Client.Disconnected += DisconnectedHandler;
 
             InitializeComponent();
         }
         #endregion
 
         #region Private methods
+        #region Window events
         private void NotifyPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -127,11 +129,6 @@ namespace MiniVNCClient.WPFExample
                         if (_Client.ContinuousUpdatesSupported)
                         {
                             _Client.EnableContinuousUpdates(true, 0, 0, _Client.ServerInfo.FramebufferWidth, _Client.ServerInfo.FramebufferHeight);
-
-                            while (_Client.Connected)
-                            {
-                                await Task.Delay(TimeSpan.FromMilliseconds(100));
-                            }
                         }
                         else
                         {
@@ -144,8 +141,6 @@ namespace MiniVNCClient.WPFExample
                             }
                         }
                     }
-
-                    NotifyPropertyChanged(nameof(Connected));
 
                     return;
                 }
@@ -170,155 +165,6 @@ namespace MiniVNCClient.WPFExample
             catch
             {
             }
-
-            NotifyPropertyChanged(nameof(Connected));
-
-            RemoteFramebuffer.Source = null;
-            RemoteCursor.Source = null;
-
-            _RemoteFramebufferCanvas = null;
-
-            SizeToContent = SizeToContent.WidthAndHeight;
-        }
-
-        private (nint FramebufferData, int FramebufferSize, int FramebufferStride) CreateFramebufferHandler(int size, int stride)
-        {
-            (nint FramebufferData, int FramebufferSize, int FramebufferStride)? result = null;
-
-            Dispatcher.Invoke(() =>
-            {
-                if (_Client.ServerInfo.PixelFormat.TrueColorFlag == 1)
-                {
-                    _RemoteFramebufferCanvas = new WriteableBitmap(
-                        pixelWidth: _Client.ServerInfo.FramebufferWidth,
-                        pixelHeight: _Client.ServerInfo.FramebufferHeight,
-                        dpiX: 96,
-                        dpiY: 96,
-                        pixelFormat: PixelFormats.Bgr32,
-                        palette: null
-                    );
-
-                    RemoteFramebuffer.Source = _RemoteFramebufferCanvas;
-                    _RemoteFramebufferLocked = false;
-                }
-
-                if (_RemoteFramebufferCanvas is not null)
-                {
-                    result = (_RemoteFramebufferCanvas.BackBuffer, _RemoteFramebufferCanvas.PixelHeight * _RemoteFramebufferCanvas.BackBufferStride, _RemoteFramebufferCanvas.BackBufferStride);
-                }
-            });
-
-            try
-            {
-                return result ?? throw new NotSupportedException();
-            }
-            catch
-            {
-                Disconnect_Click(this, new RoutedEventArgs());
-                throw;
-            }
-        }
-
-        private void FramebufferUpdateStartHandler(DateTime updateTime)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                _RemoteFramebufferCanvas?.Lock();
-                _RemoteFramebufferLocked = true;
-            });
-        }
-
-        private void FramebufferUpdateEndHandler(IEnumerable<RectangleInfo> rectangles, DateTime dateTime)
-        {
-            Dispatcher.Invoke(() =>
-            {
-                foreach (var rectangle in rectangles)
-                {
-                    if (rectangle.Width == 0
-                        || rectangle.Height == 0
-                        || rectangle.Encoding == VNCEncoding.Cursor
-                        || rectangle.Encoding == VNCEncoding.CursorWithAlpha
-                        || rectangle.Encoding == VNCEncoding.XCursor)
-                    {
-                        continue;
-                    }
-
-                    _RemoteFramebufferCanvas!.AddDirtyRect(new Int32Rect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
-                }
-
-                if (rectangles.Any())
-                {
-                    LabelEncoding.Content = rectangles.Last().Encoding;
-                }
-
-                if (_RemoteFramebufferLocked)
-                {
-                    _RemoteFramebufferCanvas!.Unlock();
-                }
-            });
-        }
-
-        private void PaletteUpdatedHandler()
-        {
-            try
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    var clientPalette = _Client.ColorPalette;
-
-                    var palette = new BitmapPalette([.. clientPalette!.Select(color => new Color() { R = (byte)(color.Red >> 8), G = (byte)(color.Green >> 8), B = (byte)(color.Blue >> 8), A = 0xff })]);
-
-                    _RemoteFramebufferCanvas = new WriteableBitmap(
-                        pixelWidth: _Client.ServerInfo.FramebufferWidth,
-                        pixelHeight: _Client.ServerInfo.FramebufferHeight,
-                        dpiX: 96,
-                        dpiY: 96,
-                        pixelFormat: PixelFormats.Indexed8,
-                        palette: palette
-                    );
-
-                    _RemoteFramebufferCanvas.Lock();
-                    _RemoteFramebufferLocked = true;
-
-                    _Client.GetFramebuffer(_RemoteFramebufferCanvas.BackBuffer);
-
-                    _RemoteFramebufferCanvas.AddDirtyRect(new Int32Rect(0, 0, _RemoteFramebufferCanvas.PixelWidth, _RemoteFramebufferCanvas.PixelHeight));
-
-                    if (_RemoteFramebufferLocked)
-                    {
-                        _RemoteFramebufferLocked = false;
-                        _RemoteFramebufferCanvas.Unlock();
-                    }
-
-                    RemoteFramebuffer.Source = _RemoteFramebufferCanvas;
-                });
-            }
-            catch (Exception)
-            {
-                Disconnect_Click(this, new RoutedEventArgs());
-            }
-        }
-
-        private void CursorUpdatedHandler()
-        {
-            Dispatcher.Invoke(() =>
-            {
-                if (_Client.Cursor!.PixelData.Length > 0)
-                {
-                    var cursorBitmap = new WriteableBitmap(_Client.Cursor.Width, _Client.Cursor.Height, 96, 96, PixelFormats.Bgra32, null);
-                    cursorBitmap.Lock();
-                    Marshal.Copy(_Client.Cursor.PixelData, 0, cursorBitmap.BackBuffer, _Client.Cursor.PixelData.Length);
-                    cursorBitmap.AddDirtyRect(new Int32Rect(0, 0, cursorBitmap.PixelWidth, cursorBitmap.PixelHeight));
-                    cursorBitmap.Unlock();
-
-                    RemoteCursor.Source = cursorBitmap;
-                    RemoteCursor.RenderTransform = new TranslateTransform(-_Client.Cursor.HotspotX, -_Client.Cursor.HotspotY);
-                }
-                else
-                {
-                    RemoteCursor.Source = null;
-                }
-            });
         }
 
         private void RemoteKeyEvent(object sender, KeyEventArgs e)
@@ -518,11 +364,166 @@ namespace MiniVNCClient.WPFExample
 
             Task.Run(() => _Client.PointerEvent((int)point.X, (int)point.Y, buttons));
         }
+        #endregion
+
+        #region VNC Events
+        private (nint FramebufferData, int FramebufferSize, int FramebufferStride) CreateFramebufferHandler(int size, int stride)
+        {
+            (nint FramebufferData, int FramebufferSize, int FramebufferStride)? result = null;
+
+            Dispatcher.Invoke(() =>
+            {
+                if (_Client.ServerInfo.PixelFormat.TrueColorFlag == 1)
+                {
+                    _RemoteFramebufferCanvas = new WriteableBitmap(
+                        pixelWidth: _Client.ServerInfo.FramebufferWidth,
+                        pixelHeight: _Client.ServerInfo.FramebufferHeight,
+                        dpiX: 96,
+                        dpiY: 96,
+                        pixelFormat: PixelFormats.Bgr32,
+                        palette: null
+                    );
+
+                    RemoteFramebuffer.Source = _RemoteFramebufferCanvas;
+                    _RemoteFramebufferLocked = false;
+                }
+
+                if (_RemoteFramebufferCanvas is not null)
+                {
+                    result = (_RemoteFramebufferCanvas.BackBuffer, _RemoteFramebufferCanvas.PixelHeight * _RemoteFramebufferCanvas.BackBufferStride, _RemoteFramebufferCanvas.BackBufferStride);
+                }
+            });
+
+            try
+            {
+                return result ?? throw new NotSupportedException();
+            }
+            catch
+            {
+                Disconnect_Click(this, new RoutedEventArgs());
+                throw;
+            }
+        }
+
+        private void FramebufferUpdateStartHandler(DateTime updateTime)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _RemoteFramebufferCanvas?.Lock();
+                _RemoteFramebufferLocked = true;
+            });
+        }
+
+        private void FramebufferUpdateEndHandler(IEnumerable<RectangleInfo> rectangles, DateTime dateTime)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                foreach (var rectangle in rectangles)
+                {
+                    if (rectangle.Width == 0
+                        || rectangle.Height == 0
+                        || rectangle.Encoding == VNCEncoding.Cursor
+                        || rectangle.Encoding == VNCEncoding.CursorWithAlpha
+                        || rectangle.Encoding == VNCEncoding.XCursor)
+                    {
+                        continue;
+                    }
+
+                    _RemoteFramebufferCanvas!.AddDirtyRect(new Int32Rect(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
+                }
+
+                if (rectangles.Any())
+                {
+                    LabelEncoding.Content = rectangles.Last().Encoding;
+                }
+
+                if (_RemoteFramebufferLocked)
+                {
+                    _RemoteFramebufferCanvas!.Unlock();
+                }
+            });
+        }
+
+        private void PaletteUpdatedHandler()
+        {
+            try
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    var clientPalette = _Client.ColorPalette;
+
+                    var palette = new BitmapPalette([.. clientPalette!.Select(color => new Color() { R = (byte)(color.Red >> 8), G = (byte)(color.Green >> 8), B = (byte)(color.Blue >> 8), A = 0xff })]);
+
+                    _RemoteFramebufferCanvas = new WriteableBitmap(
+                        pixelWidth: _Client.ServerInfo.FramebufferWidth,
+                        pixelHeight: _Client.ServerInfo.FramebufferHeight,
+                        dpiX: 96,
+                        dpiY: 96,
+                        pixelFormat: PixelFormats.Indexed8,
+                        palette: palette
+                    );
+
+                    _RemoteFramebufferCanvas.Lock();
+                    _RemoteFramebufferLocked = true;
+
+                    _Client.GetFramebuffer(_RemoteFramebufferCanvas.BackBuffer);
+
+                    _RemoteFramebufferCanvas.AddDirtyRect(new Int32Rect(0, 0, _RemoteFramebufferCanvas.PixelWidth, _RemoteFramebufferCanvas.PixelHeight));
+
+                    if (_RemoteFramebufferLocked)
+                    {
+                        _RemoteFramebufferLocked = false;
+                        _RemoteFramebufferCanvas.Unlock();
+                    }
+
+                    RemoteFramebuffer.Source = _RemoteFramebufferCanvas;
+                });
+            }
+            catch (Exception)
+            {
+                Disconnect_Click(this, new RoutedEventArgs());
+            }
+        }
+
+        private void CursorUpdatedHandler()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                if (_Client.Cursor!.PixelData.Length > 0)
+                {
+                    var cursorBitmap = new WriteableBitmap(_Client.Cursor.Width, _Client.Cursor.Height, 96, 96, PixelFormats.Bgra32, null);
+                    cursorBitmap.Lock();
+                    Marshal.Copy(_Client.Cursor.PixelData, 0, cursorBitmap.BackBuffer, _Client.Cursor.PixelData.Length);
+                    cursorBitmap.AddDirtyRect(new Int32Rect(0, 0, cursorBitmap.PixelWidth, cursorBitmap.PixelHeight));
+                    cursorBitmap.Unlock();
+
+                    RemoteCursor.Source = cursorBitmap;
+                    RemoteCursor.RenderTransform = new TranslateTransform(-_Client.Cursor.HotspotX, -_Client.Cursor.HotspotY);
+                }
+                else
+                {
+                    RemoteCursor.Source = null;
+                }
+            });
+        }
 
         private void BellHandler()
         {
             SystemSounds.Beep.Play();
         }
+
+        private void DisconnectedHandler()
+        {
+            NotifyPropertyChanged(nameof(Connected));
+
+            RemoteFramebuffer.Source = null;
+            RemoteCursor.Source = null;
+
+            _RemoteFramebufferCanvas = null;
+
+            SizeToContent = SizeToContent.WidthAndHeight;
+        }
+        #endregion
         #endregion
     }
 }
