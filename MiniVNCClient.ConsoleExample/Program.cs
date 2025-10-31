@@ -12,12 +12,10 @@ namespace MiniVNCClient.ConsoleExample
         {
             public override void Write(byte[] buffer, int offset, int count)
             {
-
             }
 
             public override void WriteByte(byte value)
             {
-
             }
         }
 
@@ -135,15 +133,19 @@ namespace MiniVNCClient.ConsoleExample
 
             var updateInterval = TimeSpan.FromSeconds(1);
 
-            Task.Run(() =>
+            Task.Run(async () =>
             {
-                Task.Delay(updateInterval).Wait();
+                await Task.Delay(updateInterval);
 
                 while (client.Connected)
                 {
                     var updateTime = DateTime.Now;
                     client.FramebufferUpdateRequest(true, 0, 0, client.ServerInfo.FramebufferWidth, client.ServerInfo.FramebufferHeight);
-                    Task.Delay(TimeSpan.FromSeconds(Math.Max(updateInterval.TotalSeconds - (DateTime.Now - updateTime).TotalSeconds, 0))).Wait();
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(
+                            Math.Max(updateInterval.TotalSeconds - (DateTime.Now - updateTime).TotalSeconds, 0)
+                        )
+                    );
                 }
             });
 
