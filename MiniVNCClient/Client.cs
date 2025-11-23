@@ -108,6 +108,7 @@ namespace MiniVNCClient
 
         private readonly ILogger? _Logger;
         private readonly bool _LogTraceEnabled = false;
+        private readonly TimeSpan _FramebufferLockTimeout = TimeSpan.FromMinutes(5);
 
         private VNCEncoding[] _EnabledEncodings = _SupportedEncodings;
 
@@ -469,7 +470,10 @@ namespace MiniVNCClient
 
             _FramebufferStride = ServerInfo.FramebufferWidth * ServerInfo.PixelFormat.BytesPerPixel;
 
-            FramebufferLock.EnterWriteLock();
+            if (!FramebufferLock.TryEnterWriteLock(_FramebufferLockTimeout))
+            {
+                throw new TimeoutException($"Error trying to call {nameof(FramebufferLock.TryEnterReadLock)}");
+            }
 
             if (CreateFramebuffer is not null)
             {
@@ -549,7 +553,11 @@ namespace MiniVNCClient
 
             try
             {
-                FramebufferLock.EnterWriteLock();
+                if (!FramebufferLock.TryEnterWriteLock(_FramebufferLockTimeout))
+                {
+                    throw new TimeoutException($"Error trying to call {nameof(FramebufferLock.TryEnterWriteLock)}");
+                }
+
                 FramebufferUpdateStart?.Invoke(updateTime);
                 successful = true;
             }
@@ -563,9 +571,9 @@ namespace MiniVNCClient
             }
             finally
             {
-                if (!successful)
+                if (!successful && _FramebufferLock is not null && _FramebufferLock.IsWriteLockHeld)
                 {
-                    _FramebufferLock?.ExitWriteLock();
+                    _FramebufferLock.ExitWriteLock();
                 }
             }
         }
@@ -576,7 +584,7 @@ namespace MiniVNCClient
             {
                 Task.WhenAll(PendingUpdates).Wait();
                 PendingUpdates.Clear();
-                FramebufferLock.ExitWriteLock();
+                _FramebufferLock?.ExitWriteLock();
                 FramebufferUpdateEnd?.Invoke(rectangles, updateTime);
             }
             catch (OperationCanceledException)
@@ -1293,7 +1301,11 @@ namespace MiniVNCClient
         {
             try
             {
-                FramebufferLock.EnterReadLock();
+                if (!FramebufferLock.TryEnterReadLock(_FramebufferLockTimeout))
+                {
+                    return false;
+                }
+
                 return true;
             }
             catch (ObjectDisposedException)
@@ -1318,19 +1330,15 @@ namespace MiniVNCClient
         /// <exception cref="ClientNotConnectedException">Thrown if the client is not connected</exception>
         public bool UnlockFramebuffer()
         {
-            if (!FramebufferLock.IsReadLockHeld)
+            if (_FramebufferLock is null || !_FramebufferLock.IsReadLockHeld)
             {
                 return true;
             }
 
             try
             {
-                FramebufferLock.ExitReadLock();
+                _FramebufferLock?.ExitReadLock();
                 return true;
-            }
-            catch (ClientNotConnectedException)
-            {
-                throw;
             }
             catch (ObjectDisposedException)
             {
@@ -1352,7 +1360,10 @@ namespace MiniVNCClient
         {
             try
             {
-                FramebufferLock.EnterReadLock();
+                if (!FramebufferLock.TryEnterReadLock(_FramebufferLockTimeout))
+                {
+                    throw new TimeoutException($"Error trying to call {nameof(FramebufferLock.TryEnterWriteLock)}");
+                }
 
                 if (ServerInfo.PixelFormat.BytesPerPixel == 4)
                 {
@@ -1365,9 +1376,9 @@ namespace MiniVNCClient
             }
             finally
             {
-                if (FramebufferLock.IsReadLockHeld)
+                if (_FramebufferLock is not null && _FramebufferLock.IsReadLockHeld)
                 {
-                    FramebufferLock.ExitReadLock();
+                    _FramebufferLock?.ExitReadLock();
                 }
             }
         }
@@ -1381,7 +1392,10 @@ namespace MiniVNCClient
         {
             try
             {
-                FramebufferLock.EnterReadLock();
+                if (!FramebufferLock.TryEnterReadLock(_FramebufferLockTimeout))
+                {
+                    throw new TimeoutException($"Error trying to call {nameof(FramebufferLock.TryEnterWriteLock)}");
+                }
 
                 var framebufferSpan = FramebufferSpan;
 
@@ -1406,7 +1420,10 @@ namespace MiniVNCClient
             }
             finally
             {
-                FramebufferLock.ExitReadLock();
+                if (_FramebufferLock is not null && _FramebufferLock.IsReadLockHeld)
+                {
+                    _FramebufferLock?.ExitReadLock();
+                }
             }
         }
 
@@ -1424,7 +1441,10 @@ namespace MiniVNCClient
         {
             try
             {
-                FramebufferLock.EnterReadLock();
+                if (!FramebufferLock.TryEnterReadLock(_FramebufferLockTimeout))
+                {
+                    throw new TimeoutException($"Error trying to call {nameof(FramebufferLock.TryEnterWriteLock)}");
+                }
 
                 if (ServerInfo.PixelFormat.BytesPerPixel == 4)
                 {
@@ -1501,7 +1521,10 @@ namespace MiniVNCClient
             }
             finally
             {
-                FramebufferLock.ExitReadLock();
+                if (_FramebufferLock is not null && _FramebufferLock.IsReadLockHeld)
+                {
+                    _FramebufferLock?.ExitReadLock();
+                }
             }
         }
         #endregion
