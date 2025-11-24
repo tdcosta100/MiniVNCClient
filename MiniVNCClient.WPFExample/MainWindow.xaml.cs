@@ -119,9 +119,12 @@ namespace MiniVNCClient.WPFExample
                 RemoteScreenScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             }
 
-            Width = double.NaN;
-            Height = double.NaN;
-            SizeToContent = SizeToContent.WidthAndHeight;
+            if (WindowState != WindowState.Maximized)
+            {
+                Width = double.NaN;
+                Height = double.NaN;
+                SizeToContent = SizeToContent.WidthAndHeight;
+            }
         }
 
         private void Connect_Click(object sender, RoutedEventArgs e)
