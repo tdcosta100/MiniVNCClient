@@ -108,11 +108,15 @@ namespace MiniVNCClient.WPFExample
             {
                 RemoteScreen.Width = double.NaN;
                 RemoteScreen.Height = double.NaN;
+                RemoteScreenScrollViewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
+                RemoteScreenScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
             }
             else
             {
                 RemoteScreen.Width = _Client.ServerInfo.FramebufferWidth * zoomLevel;
                 RemoteScreen.Height = _Client.ServerInfo.FramebufferHeight * zoomLevel;
+                RemoteScreenScrollViewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Auto;
+                RemoteScreenScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
             }
 
             Width = double.NaN;

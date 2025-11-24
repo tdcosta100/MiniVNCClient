@@ -74,7 +74,7 @@
             <Label Content="Last encoding used:" Padding="3" />
             <Label x:Name="LabelEncoding" Content="Encoding" Padding="3" FontWeight="Bold"  />
         </DockPanel>
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+        <ScrollViewer x:Name="RemoteScreenScrollViewer" VerticalScrollBarVisibility="Disabled" HorizontalScrollBarVisibility="Disabled">
             <Grid x:Name="RemoteScreen" SnapsToDevicePixels="True" Cursor="None"
                 KeyDown="RemoteKeyEvent"
                 KeyUp="RemoteKeyEvent"
