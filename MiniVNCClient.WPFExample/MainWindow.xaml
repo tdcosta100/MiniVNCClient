@@ -67,24 +67,24 @@
                 </Style>
             </DockPanel.Style>
             <Button DockPanel.Dock="Right" Width="100" Content="Disconnect" Click="Disconnect_Click" />
+            <ComboBox x:Name="ZoomLevel" DockPanel.Dock="Right" Margin="0,0,10,0" SelectionChanged="ZoomLevel_SelectionChanged" />
+            <Label DockPanel.Dock="Right" Content="Zoom:" Padding="3" />
             <Label Content="Connected to:" Padding="3" />
             <Label x:Name="LabelHost" Content="Host" Padding="3" FontWeight="Bold" Margin="0,0,20,0" />
             <Label Content="Last encoding used:" Padding="3" />
             <Label x:Name="LabelEncoding" Content="Encoding" Padding="3" FontWeight="Bold"  />
         </DockPanel>
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-            <Canvas x:Name="RemoteScreen" SnapsToDevicePixels="True" Cursor="None"
-                Width="{Binding ElementName=RemoteFramebuffer,Path=ActualWidth}"
-                Height="{Binding ElementName=RemoteFramebuffer,Path=ActualHeight}"
+            <Grid x:Name="RemoteScreen" SnapsToDevicePixels="True" Cursor="None"
                 KeyDown="RemoteKeyEvent"
                 KeyUp="RemoteKeyEvent"
                 MouseMove="RemoteMouseEvent"
                 MouseDown="RemoteMouseEvent"
                 MouseUp="RemoteMouseEvent"
                 MouseWheel="RemoteMouseEvent">
-                <Image x:Name="RemoteFramebuffer" Stretch="None" Focusable="True" />
+                <Image x:Name="RemoteFramebuffer" Stretch="Uniform" Focusable="True" />
                 <Image x:Name="RemoteCursor" Stretch="None" Focusable="True" HorizontalAlignment="Left" VerticalAlignment="Top" />
-            </Canvas>
+            </Grid>
         </ScrollViewer>
     </DockPanel>
 </Window>

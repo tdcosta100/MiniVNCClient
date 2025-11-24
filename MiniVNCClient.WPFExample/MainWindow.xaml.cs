@@ -19,6 +19,12 @@ namespace MiniVNCClient.WPFExample
     /// </summary>
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
+        private readonly record struct ZoomLevelItem
+        {
+            public double Factor { get; init; }
+            public readonly string Description => double.IsNaN(Factor) ? "Automatic" : $"{Factor * 100}%";
+        }
+
         #region Fields
         private readonly ILogger _Logger;
         private readonly Client _Client;
@@ -60,6 +66,30 @@ namespace MiniVNCClient.WPFExample
             InitializeComponent();
 
             _OriginalWindowTitle = Title;
+            ZoomLevel.ItemsSource = new List<ZoomLevelItem>()
+            {
+                new() { Factor = double.NaN },
+                new() { Factor = 0.125 },
+                new() { Factor = 0.25 },
+                new() { Factor = 0.375 },
+                new() { Factor = 0.50 },
+                new() { Factor = 0.625 },
+                new() { Factor = 0.75 },
+                new() { Factor = 0.875 },
+                new() { Factor = 1 },
+                new() { Factor = 1.25 },
+                new() { Factor = 1.5 },
+                new() { Factor = 1.75 },
+                new() { Factor = 2 },
+                new() { Factor = 2.5 },
+                new() { Factor = 3 },
+                new() { Factor = 4 },
+                new() { Factor = 8 },
+            };
+
+            ZoomLevel.DisplayMemberPath = "Description";
+            ZoomLevel.SelectedValuePath = "Factor";
+            ZoomLevel.SelectedIndex = 0;
         }
         #endregion
 
@@ -68,6 +98,26 @@ namespace MiniVNCClient.WPFExample
         private void NotifyPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        private void ZoomLevel_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var zoomLevel = (double)ZoomLevel.SelectedValue;
+
+            if (double.IsNaN(zoomLevel))
+            {
+                RemoteScreen.Width = double.NaN;
+                RemoteScreen.Height = double.NaN;
+            }
+            else
+            {
+                RemoteScreen.Width = _Client.ServerInfo.FramebufferWidth * zoomLevel;
+                RemoteScreen.Height = _Client.ServerInfo.FramebufferHeight * zoomLevel;
+            }
+
+            Width = double.NaN;
+            Height = double.NaN;
+            SizeToContent = SizeToContent.WidthAndHeight;
         }
 
         private void Connect_Click(object sender, RoutedEventArgs e)
@@ -337,6 +387,17 @@ namespace MiniVNCClient.WPFExample
         {
             var point = e.GetPosition(RemoteFramebuffer);
 
+            if (
+                RemoteFramebuffer.ActualWidth != _Client.ServerInfo.FramebufferWidth
+                || RemoteFramebuffer.ActualHeight != _Client.ServerInfo.FramebufferHeight
+            )
+            {
+                point = new Point(
+                    x: point.X * _Client.ServerInfo.FramebufferWidth / RemoteFramebuffer.ActualWidth,
+                    y: point.Y * _Client.ServerInfo.FramebufferHeight / RemoteFramebuffer.ActualHeight
+                );
+            }
+
             var buttons = PointerButtons.None;
 
             if (e.LeftButton == MouseButtonState.Pressed)
@@ -539,10 +600,12 @@ namespace MiniVNCClient.WPFExample
             {
                 RemoteFramebuffer.Source = null;
                 RemoteCursor.Source = null;
+                Canvas.SetLeft(RemoteCursor, 0);
+                Canvas.SetTop(RemoteCursor, 0);
 
                 _RemoteFramebufferCanvas = null;
 
-                SizeToContent = SizeToContent.WidthAndHeight;
+                ZoomLevel.SelectedIndex = 0;
 
                 Title = _OriginalWindowTitle;
             });
