@@ -17,6 +17,7 @@ namespace MiniVNCClient.Decoders
                 HotspotY = rectangleInfo.Y,
                 Width = rectangleInfo.Width,
                 Height = rectangleInfo.Height,
+                Encoding = rectangleInfo.Encoding,
                 CursorData = decoders[rectangleInfo.Encoding].Decode(stream, rectangleInfo, bytesPerPixel, depth),
                 ProcessRectangle = processors.TryGetValue(rectangleInfo.Encoding, out IRectangleProcessor.ProcessRectangleDelegate? processRectangle)
                     ? processRectangle

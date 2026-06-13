@@ -9,6 +9,24 @@ namespace MiniVNCClient.Data.RectangleEncodings
     [StructLayout(LayoutKind.Sequential)]
     public struct RectangleInfo
     {
+        internal static RectangleInfo Read(BinaryStream stream) => new()
+        {
+            X = stream.ReadUInt16(),
+            Y = stream.ReadUInt16(),
+            Width = stream.ReadUInt16(),
+            Height = stream.ReadUInt16(),
+            Encoding = (VNCEncoding)stream.ReadInt32()
+        };
+
+        internal readonly void Write(BinaryStream stream)
+        {
+            stream.Write(X);
+            stream.Write(Y);
+            stream.Write(Width);
+            stream.Write(Height);
+            stream.Write((int)Encoding);
+        }
+
         /// <summary>
         /// The x-coordinate of the top-left corner of the rectangle.
         /// </summary>

@@ -5,9 +5,9 @@ namespace MiniVNCClient.Security
 {
     internal class VNCAuthHandler : IAuthHandler
     {
-        public SecurityResult Handle(Client client, BinaryStream stream)
+        public SecurityResult Handle(IAuthContext context, BinaryStream stream)
         {
-            if (client.Password == null)
+            if (context.Password == null)
             {
                 throw new Exception("Empty password");
             }
@@ -15,7 +15,7 @@ namespace MiniVNCClient.Security
             using var des = DES.Create();
             des.Key = [0xe8, 0x4a, 0xd6, 0x60, 0xc4, 0x72, 0x1a, 0xe0];
 
-            var password = des.DecryptCbc(client.Password, new byte[8], PaddingMode.None);
+            var password = des.DecryptCbc(context.Password, new byte[8], PaddingMode.None);
 
             des.Key = [.. password
                 .Select(item =>

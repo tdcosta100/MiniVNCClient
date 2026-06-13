@@ -1,13 +1,64 @@
 ﻿using MiniVNCClient.Data.RectangleEncodings;
-using System.Buffers.Binary;
+using System;
+using System.Buffers;
+using System.IO;
 using System.IO.Compression;
 
 namespace MiniVNCClient.Decoders
 {
     internal class ZRLEDecoder : IRectangleDecoder, IDisposable
     {
+        private sealed class MutableWindowStream(Stream compressedStream) : Stream
+        {
+            private long _RemainingBytes;
+
+            public void Reset(long compressedLength) => _RemainingBytes = compressedLength;
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (_RemainingBytes <= 0)
+                {
+                    return 0;
+                }
+
+                int bytesRead = compressedStream.Read(buffer, offset, (int)Math.Min(count, _RemainingBytes));
+
+                _RemainingBytes -= bytesRead;
+
+                return bytesRead;
+            }
+
+            public override int Read(Span<byte> buffer)
+            {
+                if (_RemainingBytes <= 0)
+                {
+                    return 0;
+                }
+
+                int bytesRead = compressedStream.Read(buffer[..(int)Math.Min(buffer.Length, _RemainingBytes)]);
+
+                _RemainingBytes -= bytesRead;
+
+                return bytesRead;
+            }
+
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => throw new NotSupportedException();
+            public override long Position
+            {
+                get => throw new NotSupportedException();
+                set => throw new NotSupportedException();
+            }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        }
+
         #region Fields
-        private MemoryStream? _CompressedDataStream;
+        private MutableWindowStream? _CompressedStream;
         private ZLibStream? _ZlibStream;
         private int _DisposeCount = 0;
         #endregion
@@ -79,71 +130,79 @@ namespace MiniVNCClient.Decoders
             rectangle.RunLengths = [.. runLengths];
         }
 
-        private static Task<ZRLERectangle[]> BeginDecode(Stream stream, RectangleInfo rectangleInfo, int bytesPerCPixel)
+        private static Task<ZRLERectangle[]> BeginDecode(byte[] buffer, int bufferLength, RectangleInfo rectangleInfo, int bytesPerCPixel)
         {
             return Task.Run(() =>
             {
-                using var dataStream = new BinaryStream(stream);
-
-                var rectangles = new ZRLERectangle[(rectangleInfo.Width + 63) / 64 * ((rectangleInfo.Height + 63) / 64)];
-
-                var i = 0;
-
-                for (int y = 0; y < rectangleInfo.Height; y += 64)
+                try
                 {
-                    for (int x = 0; x < rectangleInfo.Width; x += 64)
+                    using var memoryStream = new MemoryStream(buffer, 0, bufferLength, false);
+                    using var dataStream = new BinaryStream(memoryStream);
+
+                    var rectangles = new ZRLERectangle[(rectangleInfo.Width + 63) / 64 * ((rectangleInfo.Height + 63) / 64)];
+
+                    var i = 0;
+
+                    for (int y = 0; y < rectangleInfo.Height; y += 64)
                     {
-                        var subencoding = dataStream.ReadByte();
-
-                        var useRLE = (subencoding & (1 << 7)) != 0;
-                        var paletteSize = subencoding & ((1 << 7) - 1);
-
-                        var rectangle = new ZRLERectangle()
+                        for (int x = 0; x < rectangleInfo.Width; x += 64)
                         {
-                            X = rectangleInfo.X + x,
-                            Y = rectangleInfo.Y + y,
-                            Width = Math.Min(rectangleInfo.Width - x, 64),
-                            Height = Math.Min(rectangleInfo.Height - y, 64),
-                            SubencodingType = useRLE
-                            ?
-                            paletteSize switch
-                            {
-                                0 => ZRLESubencodingType.PlainRLE,
-                                _ => ZRLESubencodingType.PaletteRLE
-                            }
-                            :
-                            paletteSize switch
-                            {
-                                0 => ZRLESubencodingType.Raw,
-                                1 => ZRLESubencodingType.SolidColor,
-                                _ => ZRLESubencodingType.PackedPalette
-                            }
-                        };
+                            var subencoding = dataStream.ReadByte();
 
-                        switch (rectangle.SubencodingType)
-                        {
-                            case ZRLESubencodingType.Raw:
-                                DecodeRaw(dataStream, rectangle, bytesPerCPixel);
-                                break;
-                            case ZRLESubencodingType.SolidColor:
-                                DecodeSolidColor(dataStream, rectangle, bytesPerCPixel);
-                                break;
-                            case ZRLESubencodingType.PackedPalette:
-                                DecodePackedPalette(dataStream, rectangle, bytesPerCPixel, paletteSize);
-                                break;
-                            case ZRLESubencodingType.PlainRLE:
-                            case ZRLESubencodingType.PaletteRLE:
-                                DecodeRLE(dataStream, rectangle, bytesPerCPixel, paletteSize);
-                                break;
-                            default:
-                                break;
+                            var useRLE = (subencoding & (1 << 7)) != 0;
+                            var paletteSize = subencoding & ((1 << 7) - 1);
+
+                            var rectangle = new ZRLERectangle()
+                            {
+                                X = rectangleInfo.X + x,
+                                Y = rectangleInfo.Y + y,
+                                Width = Math.Min(rectangleInfo.Width - x, 64),
+                                Height = Math.Min(rectangleInfo.Height - y, 64),
+                                SubencodingType = useRLE
+                                ?
+                                paletteSize switch
+                                {
+                                    0 => ZRLESubencodingType.PlainRLE,
+                                    _ => ZRLESubencodingType.PaletteRLE
+                                }
+                                :
+                                paletteSize switch
+                                {
+                                    0 => ZRLESubencodingType.Raw,
+                                    1 => ZRLESubencodingType.SolidColor,
+                                    _ => ZRLESubencodingType.PackedPalette
+                                }
+                            };
+
+                            switch (rectangle.SubencodingType)
+                            {
+                                case ZRLESubencodingType.Raw:
+                                    DecodeRaw(dataStream, rectangle, bytesPerCPixel);
+                                    break;
+                                case ZRLESubencodingType.SolidColor:
+                                    DecodeSolidColor(dataStream, rectangle, bytesPerCPixel);
+                                    break;
+                                case ZRLESubencodingType.PackedPalette:
+                                    DecodePackedPalette(dataStream, rectangle, bytesPerCPixel, paletteSize);
+                                    break;
+                                case ZRLESubencodingType.PlainRLE:
+                                case ZRLESubencodingType.PaletteRLE:
+                                    DecodeRLE(dataStream, rectangle, bytesPerCPixel, paletteSize);
+                                    break;
+                                default:
+                                    break;
+                            }
+
+                            rectangles[i++] = rectangle;
                         }
-
-                        rectangles[i++] = rectangle;
                     }
-                }
 
-                return rectangles;
+                    return rectangles;
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
             });
         }
         #endregion
@@ -158,42 +217,46 @@ namespace MiniVNCClient.Decoders
                     return new ZRLERectangleData();
                 }
 
-                _CompressedDataStream ??= new MemoryStream();
+                var compressedLength = (int)stream.ReadUInt32();
+                _CompressedStream ??= new MutableWindowStream(stream.Stream);
+                _CompressedStream.Reset(compressedLength);
 
-                var buffer = new byte[16384];
-
-                var bytesRead = _CompressedDataStream.Read(buffer, 0, (int)(_CompressedDataStream.Length - _CompressedDataStream.Position));
-
-                _CompressedDataStream.Position = 0;
-
-                if (bytesRead > 0)
-                {
-                    _CompressedDataStream.Write(buffer, 0, bytesRead);
-                }
-
-                _CompressedDataStream.Write(stream.ReadBytes((int)stream.ReadUInt32()));
-                _CompressedDataStream.SetLength(_CompressedDataStream.Position);
-                _CompressedDataStream.Position = 0;
-
-                var decompressedDataStream = new MemoryStream();
-
-                _ZlibStream ??= new ZLibStream(_CompressedDataStream, CompressionMode.Decompress);
-
-                while ((bytesRead = _ZlibStream.Read(buffer, 0, buffer.Length)) > 0)
-                {
-                    decompressedDataStream.Write(buffer, 0, bytesRead);
-                }
-
-                decompressedDataStream.Position = 0;
+                _ZlibStream ??= new ZLibStream(_CompressedStream, CompressionMode.Decompress, true);
 
                 var bytesPerCPixel = (bytesPerPixel > 1) ? (depth > 24 ? 4 : 3) : 1;
-                var rectanglesTask = BeginDecode(decompressedDataStream, rectangleInfo, bytesPerCPixel);
+                var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(rectangleInfo.Width * rectangleInfo.Height * bytesPerCPixel, 65536));
 
-                return new ZRLERectangleData()
+                try
                 {
-                    BytesPerCPixel = bytesPerCPixel,
-                    RectanglesTask = rectanglesTask
-                };
+                    int decompressedSize = 0;
+                    int bytesRead;
+
+                    while ((bytesRead = _ZlibStream.Read(buffer, decompressedSize, buffer.Length - decompressedSize)) > 0)
+                    {
+                        decompressedSize += bytesRead;
+
+                        if (decompressedSize >= buffer.Length - 4096)
+                        {
+                            var newBuffer = ArrayPool<byte>.Shared.Rent(buffer.Length * 2);
+                            buffer.AsSpan(0, decompressedSize).CopyTo(newBuffer);
+                            ArrayPool<byte>.Shared.Return(buffer);
+                            buffer = newBuffer;
+                        }
+                    }
+
+                    var rectanglesTask = BeginDecode(buffer, decompressedSize, rectangleInfo, bytesPerCPixel);
+
+                    return new ZRLERectangleData()
+                    {
+                        BytesPerCPixel = bytesPerCPixel,
+                        RectanglesTask = rectanglesTask
+                    };
+                }
+                catch
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                    throw;
+                }
             }
             catch (ObjectDisposedException)
             {
@@ -205,7 +268,7 @@ namespace MiniVNCClient.Decoders
         {
             if (Interlocked.Increment(ref _DisposeCount) == 1)
             {
-                _ZlibStream?.Close();
+                _ZlibStream?.Dispose();
             }
         }
         #endregion

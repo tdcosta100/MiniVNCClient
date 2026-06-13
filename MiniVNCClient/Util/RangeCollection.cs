@@ -26,11 +26,13 @@
         {
             get
             {
-                var result = _InternalDictionary.Keys.Where(k => k.Start.Value <= key && key <= k.End.Value);
+                var result = _InternalDictionary.Keys
+                    .Select(k => (Range?)k)
+                    .FirstOrDefault(k => k.Value.Start.Value <= key && key <= k.Value.End.Value);
 
-                if (result.Any())
+                if (result.HasValue)
                 {
-                    return _InternalDictionary[result.First()];
+                    return _InternalDictionary[result.Value];
                 }
 
                 throw new KeyNotFoundException();

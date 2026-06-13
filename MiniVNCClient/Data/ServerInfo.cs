@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using System.Text;
 
 namespace MiniVNCClient.Data
 {
@@ -8,6 +9,20 @@ namespace MiniVNCClient.Data
     [StructLayout(LayoutKind.Sequential)]
     public struct ServerInfo
     {
+        internal static ServerInfo Read(BinaryStream stream)
+        {
+            uint stringLength;
+
+            return new()
+            {
+                FramebufferWidth = stream.ReadUInt16(),
+                FramebufferHeight = stream.ReadUInt16(),
+                PixelFormat = PixelFormat.Read(stream),
+                NameLength = stringLength = stream.ReadUInt32(),
+                Name = Encoding.UTF8.GetString(stream.ReadBytes((int)stringLength))
+            };
+        }
+
         /// <summary>
         /// Width of the remote framebuffer
         /// </summary>

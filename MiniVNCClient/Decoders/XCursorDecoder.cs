@@ -14,8 +14,8 @@ namespace MiniVNCClient.Decoders
                 HotspotY = rectangleInfo.Y,
                 Width = rectangleInfo.Width,
                 Height = rectangleInfo.Height,
-                PrimaryColor = Serializer.Deserialize<Color8>(stream),
-                SecondaryColor = Serializer.Deserialize<Color8>(stream),
+                PrimaryColor = Color8.Read(stream),
+                SecondaryColor = Color8.Read(stream),
                 BitMap = stream.ReadBytes((rectangleInfo.Width + 7) / 8 * rectangleInfo.Height),
                 BitMask = stream.ReadBytes((rectangleInfo.Width + 7) / 8 * rectangleInfo.Height)
             };

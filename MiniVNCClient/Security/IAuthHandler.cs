@@ -2,6 +2,6 @@
 {
     internal interface IAuthHandler
     {
-        SecurityResult Handle(Client client, BinaryStream stream);
+        SecurityResult Handle(IAuthContext client, BinaryStream stream);
     }
 }

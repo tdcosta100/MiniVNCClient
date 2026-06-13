@@ -27,7 +27,7 @@ namespace MiniVNCClient
         public event Action? Bell;
         public event Action<string>? ServerCutText;
         public event Action<FenceFlags, byte[]?>? ServerFence;
-        public event Action<DateTime, RectangleInfo, CursorData>? Cursor;
+        public event Action<DateTime, CursorData>? Cursor;
         public event Action<DateTime, RectangleInfo>? FramebufferSizeChange;
         public event Action<string>? ServerNameChange;
         #endregion
@@ -80,7 +80,7 @@ namespace MiniVNCClient
 
                     while (rectangleLength-- > 0)
                     {
-                        var rectangleInfo = Serializer.Deserialize<RectangleInfo>(stream);
+                        var rectangleInfo = RectangleInfo.Read(stream);
 
                         if (rectangleInfo.Encoding == VNCEncoding.DesktopName)
                         {
@@ -124,7 +124,7 @@ namespace MiniVNCClient
                                     case VNCEncoding.Cursor:
                                     case VNCEncoding.CursorWithAlpha:
                                     case VNCEncoding.XCursor:
-                                        processingTasks.Add(Task.Run(() => Cursor?.Invoke(updateTime, rectangleInfo, (CursorData)rectangleData)));
+                                        processingTasks.Add(Task.Run(() => Cursor?.Invoke(updateTime, (CursorData)rectangleData)));
                                         break;
                                     default:
                                         processingTasks.Add(Task.Run(() =>
@@ -182,7 +182,7 @@ namespace MiniVNCClient
             var firstColor = stream.ReadUInt16();
             var colorLength = stream.ReadUInt16();
             var palette = Enumerable.Range(0, colorLength)
-                .Select(_ => Serializer.Deserialize<Color16>(stream))
+                .Select(_ => Color16.Read(stream))
                 .ToArray();
 
             if (_LogTraceEnabled)
@@ -309,7 +309,7 @@ namespace MiniVNCClient
         {
             using var binaryStream = new BinaryStream(new MemoryStream());
 
-            Serializer.Serialize(binaryStream, pixelFormat);
+            pixelFormat.Write(binaryStream);
 
             SendMessage(
                 stream: stream,

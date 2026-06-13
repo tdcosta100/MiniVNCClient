@@ -48,12 +48,10 @@ namespace MiniVNCClient
         }
     }
 
-    internal readonly record struct Update(Task Start, ConcurrentBag<Task<RectangleInfo>> Pending, TaskCompletionSource End);
-
     /// <summary>
     /// Client for VNC connections
     /// </summary>
-    public partial class Client
+    public partial class Client : IDisposable, IAuthContext
     {
         #region Fields
         private static readonly RangeCollection<SecurityType> _SecurityTypes = new([
@@ -109,6 +107,7 @@ namespace MiniVNCClient
         private readonly ILogger? _Logger;
         private readonly bool _LogTraceEnabled = false;
         private readonly TimeSpan _FramebufferLockTimeout = TimeSpan.FromMinutes(5);
+        private readonly ConcurrentQueue<TaskCompletionSource<(FenceFlags, byte[]?)>> _PendingFenceResponses = new();
 
         private VNCEncoding[] _EnabledEncodings = _SupportedEncodings;
 
@@ -132,6 +131,8 @@ namespace MiniVNCClient
 
         private CancellationTokenSource? _CancellationTokenSource;
         private ConcurrentBag<Task>? _PendingUpdates;
+
+        private volatile bool _NeedsFullFramebufferUpdate = false;
         #endregion
 
         #region Private properties
@@ -462,7 +463,7 @@ namespace MiniVNCClient
 
             RFBStream.Write((byte)(Shared ? 1 : 0));
 
-            ServerInfo = Serializer.Deserialize<ServerInfo>(RFBStream);
+            ServerInfo = ServerInfo.Read(RFBStream);
 
             _Logger?.LogInformation("Received server initialization: {serverInfo}", ServerInfo);
 
@@ -511,40 +512,46 @@ namespace MiniVNCClient
 
             _CancellationTokenSource = new();
 
-            Task.Run(() =>
+            new Thread(MessageListener)
             {
-                Thread.CurrentThread.Name = "MiniVNCClient - Message Listener";
+                IsBackground = true,
+                Priority = ThreadPriority.AboveNormal
+            }.Start();
+        }
 
-                _Logger?.LogInformation("Starting to listen for server messages");
+        private void MessageListener()
+        {
+            Thread.CurrentThread.Name = "MiniVNCClient - Message Listener";
 
-                while (Connected)
+            _Logger?.LogInformation("Starting to listen for server messages");
+
+            while (Connected && !CancellationTokenSource.IsCancellationRequested)
+            {
+                try
+                {
+                    MessageHandler.HandleMessage(RFBStream);
+                }
+                catch (EndOfStreamException)
                 {
                     try
                     {
-                        MessageHandler.HandleMessage(RFBStream);
+                        Disconnect();
                     }
-                    catch (EndOfStreamException)
+                    finally
                     {
-                        try
-                        {
-                            Disconnect();
-                        }
-                        finally
-                        {
-                        }
-                    }
-                    catch (ClientNotConnectedException)
-                    {
-                    }
-                    catch (Exception ex)
-                    {
-                        if (Connected)
-                        {
-                            _Logger?.LogError("Error reading messages from server: {exception}", ex);
-                        }
                     }
                 }
-            }, CancellationTokenSource.Token);
+                catch (ClientNotConnectedException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    if (Connected)
+                    {
+                        _Logger?.LogError("Error reading messages from server: {exception}", ex);
+                    }
+                }
+            }
         }
 
         private void UpdateFramebufferBeginHandler(DateTime updateTime)
@@ -728,14 +735,21 @@ namespace MiniVNCClient
         {
             try
             {
-                MessageHandler?.ClientFence(RFBStream, flags & (FenceFlags.BlockBefore | FenceFlags.BlockAfter | FenceFlags.SyncNext), data);
+                if (flags.HasFlag(FenceFlags.Request))
+                {
+                    MessageHandler?.ClientFence(RFBStream, flags & (FenceFlags.BlockBefore | FenceFlags.BlockAfter), data);
+                }
+                else if (_PendingFenceResponses.TryDequeue(out var taskCompletionSource))
+                {
+                    taskCompletionSource.TrySetResult((flags, data));
+                }
             }
             catch (ClientNotConnectedException)
             {
             }
         }
 
-        private void CursorHandler(DateTime updateTime, RectangleInfo rectangleInfo, CursorData cursorData)
+        private void CursorHandler(DateTime updateTime, CursorData cursorData)
         {
             try
             {
@@ -743,103 +757,7 @@ namespace MiniVNCClient
                 {
                     Thread.CurrentThread.Name = "MiniVNCClient - CursorUpdated event";
 
-                    var cursorBytesPerPixel = 4;
-                    var clientBytesPerPixel = ServerInfo.PixelFormat.BytesPerPixel;
-
-                    switch (cursorData)
-                    {
-                        case CursorRectangleData cursor:
-                            {
-                                var bitStride = (cursor.Width + 7) / 8 * 8;
-                                var bitMask = cursor.BitMask
-                                    !.SelectMany(b =>
-                                        Enumerable.Range(0, 8)
-                                        .Select(i => ((b >> (8 - (i + 1))) & 0b00000001) == 1)
-                                    )
-                                    .ToArray();
-
-                                var pixelData = new byte[cursor.Width * cursor.Height * cursorBytesPerPixel];
-
-                                var width = cursor.Width * cursorBytesPerPixel;
-                                var height = cursor.Height * cursorBytesPerPixel;
-
-                                for (int y = 0; y < cursor.Height; y++)
-                                {
-                                    for (int x = 0; x < cursor.Width; x++)
-                                    {
-                                        cursor.PixelData
-                                            .AsSpan()
-                                            .Slice(start: (y * cursor.Width + x) * clientBytesPerPixel, length: clientBytesPerPixel)
-                                            .CopyTo(
-                                                pixelData.AsSpan()
-                                                .Slice(start: (y * cursor.Width + x) * cursorBytesPerPixel, length: cursorBytesPerPixel)
-                                            );
-
-                                        pixelData[(y * cursor.Width + x) * cursorBytesPerPixel + 3] = (byte)(bitMask[y * bitStride + x] ? 0xff : 0x00);
-                                    }
-                                }
-
-                                cursor.PixelData = pixelData;
-                            }
-                            break;
-                        case CursorWithAlphaRectangleData cursor:
-                            {
-                                var pixelData = new byte[cursor.Width * cursor.Height * cursorBytesPerPixel];
-                                var pixelDataHandler = GCHandle.Alloc(pixelData, GCHandleType.Pinned);
-
-                                rectangleInfo.X = 0;
-                                rectangleInfo.Y = 0;
-                                cursor.ProcessRectangle!(pixelDataHandler.AddrOfPinnedObject(), pixelData.Length, cursor.Width * cursorBytesPerPixel, rectangleInfo, cursor.CursorData!, cursorBytesPerPixel, 32);
-                                cursor.PixelData = pixelData;
-                                pixelDataHandler.Free();
-                            }
-                            break;
-                        case XCursorRectangleData cursor:
-                            {
-                                var pixelData = new byte[cursor.Width * cursor.Height * cursorBytesPerPixel];
-
-                                var bitStride = (cursor.Width + 7) / 8 * 8;
-
-                                var bitMask = cursor.BitMask!
-                                    .SelectMany(b =>
-                                        Enumerable.Range(0, 8)
-                                        .Select(i => ((b >> (8 - (i + 1))) & 0b00000001) == 1)
-                                    )
-                                    .ToArray();
-
-                                var bitMap = cursor.BitMap!
-                                    .SelectMany(b =>
-                                        Enumerable.Range(0, 8)
-                                        .Select(i => ((b >> (8 - (i + 1))) & 0b00000001) == 1)
-                                    )
-                                    .ToArray();
-
-                                byte[][] colors = [
-                                    [ cursor.PrimaryColor.Blue, cursor.PrimaryColor.Green, cursor.PrimaryColor.Red ],
-                                [ cursor.SecondaryColor.Blue, cursor.SecondaryColor.Green, cursor.SecondaryColor.Red ]
-                                ];
-
-                                for (int y = 0; y < cursor.Height; y++)
-                                {
-                                    for (int x = 0; x < cursor.Width; x++)
-                                    {
-                                        colors[bitMap[y * bitStride + x] ? 0 : 1]
-                                            .AsSpan()
-                                            .CopyTo(
-                                                pixelData.AsSpan()
-                                                .Slice(start: (y * cursor.Width + x) * cursorBytesPerPixel, length: cursorBytesPerPixel)
-                                            );
-
-                                        pixelData[(y * cursor.Width + x) * cursorBytesPerPixel + 3] = (byte)(bitMask[y * bitStride + x] ? 0xff : 0x00);
-                                    }
-                                }
-
-                                cursor.PixelData = pixelData;
-                            }
-                            break;
-                        default:
-                            break;
-                    }
+                    CursorProcessor.Process(cursorData, ServerInfo.PixelFormat.BytesPerPixel);
 
                     _Cursor = cursorData;
                     CursorUpdated?.Invoke();
@@ -867,7 +785,7 @@ namespace MiniVNCClient
                 Name = ServerInfo.Name
             };
 
-            _FramebufferStride = ServerInfo.PixelFormat.BytesPerPixel;
+            _FramebufferStride = ServerInfo.FramebufferWidth * ServerInfo.PixelFormat.BytesPerPixel;
 
             if (CreateFramebuffer is not null)
             {
@@ -881,6 +799,8 @@ namespace MiniVNCClient
                 _FramebufferHandle = GCHandle.Alloc(_Framebuffer, GCHandleType.Pinned);
                 _FramebufferAddress = _FramebufferHandle.Value.AddrOfPinnedObject();
             }
+
+            _NeedsFullFramebufferUpdate = !ContinuousUpdatesSupported;
         }
 
         private void ServerNameChangeHandler(string name)
@@ -895,6 +815,25 @@ namespace MiniVNCClient
             };
 
             ServerNameChanged?.Invoke();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="disposing"></param>
+        protected internal void Dispose(bool disposing)
+        {
+            if (_DisconnectCalled)
+            {
+                return;
+            }
+
+            if (disposing)
+            {
+                // Do nothing, Disconnect() will handle the disposal
+            }
+
+            Disconnect();
         }
         #endregion
 
@@ -983,6 +922,24 @@ namespace MiniVNCClient
         }
 
         /// <summary>
+        /// Connects to a VNC server asynchronously.
+        /// Throws on failure — callers may <c>await</c> and catch exceptions,
+        /// or check <see cref="Connected"/> after the call.
+        /// </summary>
+        public async Task ConnectAsync(string host, int port = 5900, CancellationToken ct = default)
+        {
+            if (Connected) { _Logger?.LogWarning("Already connected"); return; }
+        
+            _Logger?.LogInformation("Connecting to {hostname}:{port}", host, port);
+        
+            _TcpClient = new TcpClient() { NoDelay = true };
+            await _TcpClient.ConnectAsync(host, port, ct);
+        
+            _Logger?.LogInformation("Connection successful, initializing session");
+            Connect(_TcpClient.GetStream());
+        }
+
+        /// <summary>
         /// Disconnects the client from the established connection and frees all client resources.
         /// </summary>
         public void Disconnect()
@@ -1036,6 +993,16 @@ namespace MiniVNCClient
             }
 
             Disconnected?.Invoke();
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
@@ -1102,6 +1069,7 @@ namespace MiniVNCClient
                 try
                 {
                     MessageHandler?.SetPixelFormat(RFBStream, pixelFormat);
+                    _NeedsFullFramebufferUpdate = !ContinuousUpdatesSupported;
 
                     return true;
                 }
@@ -1130,7 +1098,8 @@ namespace MiniVNCClient
             {
                 try
                 {
-                    MessageHandler?.FramebufferUpdateRequest(RFBStream, incremental, x, y, width, height);
+                    MessageHandler?.FramebufferUpdateRequest(RFBStream, incremental && !_NeedsFullFramebufferUpdate, x, y, width, height);
+                    _NeedsFullFramebufferUpdate = false;
 
                     return true;
                 }
@@ -1235,6 +1204,7 @@ namespace MiniVNCClient
                 try
                 {
                     MessageHandler?.ClientFence(RFBStream, flags, data);
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -1243,6 +1213,19 @@ namespace MiniVNCClient
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Sends a ClientFence and returns a Task that completes when the server
+        /// echoes the fence back (non-Request ServerFence received).
+        /// </summary>
+        public Task<(FenceFlags Flags, byte[]? Data)> ClientFenceAsync(FenceFlags flags, byte[]? data, CancellationToken cancellationToken = default)
+        {
+            var taskCompletionSource = new TaskCompletionSource<(FenceFlags, byte[]?)>();
+            _PendingFenceResponses.Enqueue(taskCompletionSource);
+            cancellationToken.Register(() => taskCompletionSource.TrySetCanceled());
+            ClientFence(flags | FenceFlags.Request, data);
+            return taskCompletionSource.Task;
         }
 
         /// <summary>

@@ -4,11 +4,11 @@ namespace MiniVNCClient.Security
 {
     internal class NoneAuthHandler : IAuthHandler
     {
-        public SecurityResult Handle(Client client, BinaryStream stream)
+        public SecurityResult Handle(IAuthContext context, BinaryStream stream)
         {
             stream.Write((byte)SecurityType.None);
 
-            if (client.ServerVersion >= Client.Version38)
+            if (context.ServerVersion >= Client.Version38)
             {
                 return (SecurityResult)stream.ReadUInt32();
             }

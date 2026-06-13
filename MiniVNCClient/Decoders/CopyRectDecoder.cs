@@ -7,7 +7,7 @@ namespace MiniVNCClient.Decoders
     {
         public IRectangleData Decode(BinaryStream stream, RectangleInfo rectangleInfo, int bytesPerPixel, int depth)
         {
-            return Serializer.Deserialize<CopyRectRectangleData>(stream);
+            return CopyRectRectangleData.Read(stream);
         }
     }
 }

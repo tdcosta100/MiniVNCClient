@@ -8,6 +8,40 @@ namespace MiniVNCClient.Data
     [StructLayout(LayoutKind.Sequential)]
     public struct PixelFormat
     {
+        internal static PixelFormat Read(BinaryStream stream) => new()
+        {
+            BitsPerPixel = stream.ReadByte(),
+            Depth = stream.ReadByte(),
+            BigEndianFlag = stream.ReadByte(),
+            TrueColorFlag = stream.ReadByte(),
+            RedMax = stream.ReadUInt16(),
+            GreenMax = stream.ReadUInt16(),
+            BlueMax = stream.ReadUInt16(),
+            RedShift = stream.ReadByte(),
+            GreenShift = stream.ReadByte(),
+            BlueShift = stream.ReadByte(),
+            Padding1 = stream.ReadByte(),
+            Padding2 = stream.ReadByte(),
+            Padding3 = stream.ReadByte()
+        };
+
+        internal readonly void Write(BinaryStream stream)
+        {
+            stream.Write(BitsPerPixel);
+            stream.Write(Depth);
+            stream.Write(BigEndianFlag);
+            stream.Write(TrueColorFlag);
+            stream.Write(RedMax);
+            stream.Write(GreenMax);
+            stream.Write(BlueMax);
+            stream.Write(RedShift);
+            stream.Write(GreenShift);
+            stream.Write(BlueShift);
+            stream.Write(Padding1);
+            stream.Write(Padding2);
+            stream.Write(Padding3);
+        }
+
         /// <summary>
         /// Bits per pixel
         /// </summary>
