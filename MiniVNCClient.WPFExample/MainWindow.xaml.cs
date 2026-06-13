@@ -393,13 +393,14 @@ namespace MiniVNCClient.WPFExample
         private void RemoteMouseEvent(object sender, MouseEventArgs e)
         {
             var point = e.GetPosition(RemoteFramebuffer);
+            var remotePoint = point;
 
             if (
                 RemoteFramebuffer.ActualWidth != _Client.ServerInfo.FramebufferWidth
                 || RemoteFramebuffer.ActualHeight != _Client.ServerInfo.FramebufferHeight
             )
             {
-                point = new Point(
+                remotePoint = new Point(
                     x: point.X * _Client.ServerInfo.FramebufferWidth / RemoteFramebuffer.ActualWidth,
                     y: point.Y * _Client.ServerInfo.FramebufferHeight / RemoteFramebuffer.ActualHeight
                 );
@@ -426,16 +427,15 @@ namespace MiniVNCClient.WPFExample
             {
                 if (ew.Delta > 0)
                 {
-                    _Client.PointerEvent((int)point.X, (int)point.Y, buttons | PointerButtons.ScrollUp);
+                    _Client.PointerEvent((int)remotePoint.X, (int)remotePoint.Y, buttons | PointerButtons.ScrollUp);
                 }
                 else
                 {
-                    _Client.PointerEvent((int)point.X, (int)point.Y, buttons | PointerButtons.ScrollDown);
+                    _Client.PointerEvent((int)remotePoint.X, (int)remotePoint.Y, buttons | PointerButtons.ScrollDown);
                 }
             }
 
-            Canvas.SetLeft(RemoteCursor, point.X);
-            Canvas.SetTop(RemoteCursor, point.Y);
+            RemoteCursor.Margin = new Thickness(point.X, point.Y, 0, 0);
 
             if (!RemoteFramebuffer.IsFocused)
             {
@@ -444,7 +444,7 @@ namespace MiniVNCClient.WPFExample
 
             e.Handled = true;
 
-            Task.Run(() => _Client.PointerEvent((int)point.X, (int)point.Y, buttons));
+            Task.Run(() => _Client.PointerEvent((int)remotePoint.X, (int)remotePoint.Y, buttons));
         }
         #endregion
 
