@@ -15,7 +15,7 @@ namespace MiniVNCClient
 
             if (byteValue < 0)
             {
-                throw new Exception("Error reading data from the stream");
+                throw new EndOfStreamException("Connection closed");
             }
 
             return (byte)byteValue;

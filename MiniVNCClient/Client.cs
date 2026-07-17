@@ -287,9 +287,29 @@ namespace MiniVNCClient
             {
                 try
                 {
-                    return !_DisconnectCalled && _Stream is not null && (_Stream is not NetworkStream || TcpClient.Connected);
+                    if (_DisconnectCalled || _Stream is null)
+                    {
+                        return false;
+                    }
+
+                    if (_Stream is not NetworkStream)
+                    {
+                        return true;
+                    }
+
+                    var socket = TcpClient.Client;
+
+                    return TcpClient.Connected && (!socket.Poll(0, SelectMode.SelectRead) || socket.Available > 0);
                 }
                 catch (ClientNotConnectedException)
+                {
+                    return false;
+                }
+                catch (SocketException)
+                {
+                    return false;
+                }
+                catch (ObjectDisposedException)
                 {
                     return false;
                 }
@@ -531,8 +551,13 @@ namespace MiniVNCClient
                 {
                     MessageHandler.HandleMessage(RFBStream);
                 }
-                catch (EndOfStreamException)
+                catch (Exception ex) when (ex is EndOfStreamException or SocketException or IOException { InnerException: SocketException })
                 {
+                    if (ex is not EndOfStreamException)
+                    {
+                        _Logger?.LogWarning("Socket error while reading from server: {exception}", ex.InnerException ?? ex);
+                    }
+
                     try
                     {
                         Disconnect();
@@ -568,11 +593,7 @@ namespace MiniVNCClient
                 FramebufferUpdateStart?.Invoke(updateTime);
                 successful = true;
             }
-            catch (ClientNotConnectedException)
-            {
-                successful = false;
-            }
-            catch (OperationCanceledException)
+            catch (Exception ex) when (ex is ClientNotConnectedException or OperationCanceledException)
             {
                 successful = false;
             }
@@ -594,10 +615,7 @@ namespace MiniVNCClient
                 _FramebufferLock?.ExitWriteLock();
                 FramebufferUpdateEnd?.Invoke(rectangles, updateTime);
             }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ClientNotConnectedException)
+            catch (Exception ex) when (ex is OperationCanceledException or ClientNotConnectedException)
             {
             }
             finally
@@ -622,10 +640,7 @@ namespace MiniVNCClient
                     processRectangle?.Invoke(FramebufferAddress, FramebufferSize, FramebufferStride, info, data, ServerInfo.PixelFormat.BytesPerPixel, ServerInfo.PixelFormat.Depth);
                 }
             }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ClientNotConnectedException)
+            catch (Exception ex) when (ex is OperationCanceledException or ClientNotConnectedException)
             {
             }
             catch (Exception ex)
@@ -889,6 +904,11 @@ namespace MiniVNCClient
 
                 TcpClient.EndConnect(connectResult);
 
+                TcpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+                TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+                TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
+                TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+
                 _Logger?.LogInformation("Connection successful, initializing session");
 
                 Connect(TcpClient.GetStream());
@@ -933,10 +953,15 @@ namespace MiniVNCClient
             _Logger?.LogInformation("Connecting to {hostname}:{port}", host, port);
         
             _TcpClient = new TcpClient() { NoDelay = true };
-            await _TcpClient.ConnectAsync(host, port, ct);
-        
+            await TcpClient.ConnectAsync(host, port, ct);
+
+            TcpClient.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 15);
+            TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 5);
+            TcpClient.Client.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+
             _Logger?.LogInformation("Connection successful, initializing session");
-            Connect(_TcpClient.GetStream());
+            Connect(TcpClient.GetStream());
         }
 
         /// <summary>
